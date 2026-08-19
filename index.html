@@ -79,6 +79,10 @@
   .day-btn:hover { filter: brightness(1.15); }
   .day-btn.selected { border-color: #F5F3ED; }
   .day-btn.today { font-weight: 800; text-decoration: underline; text-underline-offset: 3px; }
+  .marker-dot {
+    position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%;
+    z-index: 3; box-shadow: 0 0 0 1px rgba(0,0,0,0.5);
+  }
   .year-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 26px; }
   .mini-month { background: #101116; border: 1px solid #1E2027; border-radius: 12px; padding: 12px 12px 14px; }
   .mini-title { font-size: 12.5px; font-weight: 800; color: #B8BCC6; margin-bottom: 8px; letter-spacing: 0.03em; }
@@ -102,11 +106,32 @@
   .detail-sub { font-size: 12.5px; color: #7D818C; margin-top: 1px; }
   .badge-row { display: flex; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
   .badge { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 700; border-radius: 6px; padding: 3px 8px; }
+  .crew-card {
+    background: #101116; border: 1px solid #1E2027; border-radius: 16px;
+    padding: 14px 16px; margin-bottom: 18px;
+  }
+  .crew-title { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #7D818C; font-weight: 700; margin-bottom: 10px; }
+  .crew-row { display: flex; align-items: center; justify-content: space-between; padding: 7px 0; border-top: 1px solid #1E2027; }
+  .crew-row:first-of-type { border-top: none; }
+  .crew-name { font-size: 13.5px; font-weight: 600; color: #C8CBD3; }
+  .crew-name.you { color: #F5F3ED; font-weight: 800; }
+  .crew-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 999px; }
   .legend-row { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
   .legend-item { display: flex; align-items: center; gap: 7px; }
   .legend-swatch { width: 9px; height: 9px; border-radius: 3px; }
   .legend-text { font-size: 12.5px; color: #9A9EA8; font-weight: 500; }
   .legend-count { font-size: 12.5px; color: #565A64; }
+  .picker-wrap { width: 100%; max-width: 380px; text-align: center; padding-top: 40px; }
+  .picker-sub { font-size: 14px; color: #9A9EA8; margin-bottom: 26px; }
+  .picker-list { display: flex; flex-direction: column; gap: 10px; }
+  .picker-btn {
+    font-family: 'Inter', sans-serif; font-size: 16px; font-weight: 700; color: #F5F3ED;
+    background: #15171D; border: 1px solid #272A33; border-radius: 12px; padding: 16px;
+    cursor: pointer; text-align: left;
+  }
+  .picker-btn:hover { border-color: #E3B15E; }
+  .picker-cancel { margin-top: 16px; background: transparent; border: none; color: #7D818C; font-size: 13px; cursor: pointer; }
+  .switch-link { background: transparent; border: none; color: #7D818C; font-size: 11px; text-decoration: underline; cursor: pointer; letter-spacing: 0.05em; text-transform: uppercase; font-weight: 600; }
 </style>
 </head>
 <body>
@@ -119,6 +144,11 @@
   // Anchor: July 31, 2026 is day 0 of the cycle (first day of an 8-day DAY block)
   var ANCHOR = new Date(2026, 6, 31);
   var CYCLE_LEN = 21;
+  var CREWS = [
+    { id: 'cj', label: 'Chris/CJ', abbr: 'CJ', anchor: new Date(2026, 6, 31) },
+    { id: 'ab', label: 'Allen/Brad', abbr: 'AB', anchor: new Date(2026, 7, 7) },
+    { id: 'bj', label: 'Bill/Justin', abbr: 'BJ', anchor: new Date(2026, 6, 24) },
+  ];
   var CYCLE_SEGMENTS = [
     { len: 8, type: 'day' },
     { len: 4, type: 'off' },
@@ -133,19 +163,22 @@
     return Math.round((ub - ua) / ms);
   }
 
-  function cycleIndex(date) {
-    var idx = daysBetween(ANCHOR, date) % CYCLE_LEN;
+  function cycleIndexFor(anchor, date) {
+    var idx = daysBetween(anchor, date) % CYCLE_LEN;
     if (idx < 0) idx += CYCLE_LEN;
     return idx;
   }
 
-  function getShift(date) {
-    var idx = cycleIndex(date);
+  function shiftFromIndex(idx) {
     if (idx <= 7) return 'day';
     if (idx <= 11) return 'off';
     if (idx <= 18) return 'afternoon';
     return 'off';
   }
+
+  function cycleIndex(date) { return cycleIndexFor(ANCHOR, date); }
+  function getShift(date) { return shiftFromIndex(cycleIndex(date)); }
+  function getShiftForCrew(crew, date) { return shiftFromIndex(cycleIndexFor(crew.anchor, date)); }
 
   var SHIFT_META = {
     day: { label: 'Day shift', sub: '7:00a – 3:00p', color: '#E3B15E' },
@@ -270,23 +303,60 @@
 
   // ---- State ----
   var today = new Date();
+  var savedCrew = null;
+  try { savedCrew = localStorage.getItem('shiftcal_crew'); } catch (e) {}
+  if (savedCrew && !CREWS.some(function (c) { return c.id === savedCrew; })) savedCrew = null;
+
   var state = {
     viewYear: today.getFullYear(),
     viewMonth: today.getMonth(),
     selected: today,
     yearPickerOpen: false,
     expanded: false,
+    myCrew: savedCrew,
   };
+
+  function getCrew(id) {
+    for (var i = 0; i < CREWS.length; i++) if (CREWS[i].id === id) return CREWS[i];
+    return null;
+  }
+  function myAnchor() {
+    var c = getCrew(state.myCrew);
+    return c ? c.anchor : CREWS[0].anchor;
+  }
+  function myShift(date) { return shiftFromIndex(cycleIndexFor(myAnchor(), date)); }
+  function myCycleIndex(date) { return cycleIndexFor(myAnchor(), date); }
+  function setMyCrew(id) {
+    state.myCrew = id;
+    try { localStorage.setItem('shiftcal_crew', id); } catch (e) {}
+  }
 
   function escapeAttr(s) { return String(s).replace(/"/g, '&quot;'); }
 
+  function renderCrewPicker(switching) {
+    var root = document.getElementById('root');
+    var html = '<div class="picker-wrap">';
+    html += '<div class="eyebrow"><span class="line"></span>Rotation · 8 on · 4 off · 7 pm · 2 off</div>';
+    html += '<h1 style="font-size:40px;margin-bottom:6px;">Work Calendar</h1>';
+    html += '<div class="picker-sub">' + (switching ? 'Switch which schedule is yours' : 'Which schedule is yours?') + '</div>';
+    html += '<div class="picker-list">';
+    CREWS.forEach(function (crew) {
+      html += '<button class="picker-btn" data-crew="' + crew.id + '">' + crew.label + '</button>';
+    });
+    html += '</div>';
+    if (switching) html += '<button class="picker-cancel" id="picker-cancel">Cancel</button>';
+    html += '</div>';
+    root.innerHTML = html;
+  }
+
   function render() {
+    if (!state.myCrew) { renderCrewPicker(false); return; }
     var root = document.getElementById('root');
     var holidayMap = buildHolidayMap(state.viewYear);
     function holidayName(date) { return holidayMap[dateKey(date)] || null; }
 
-    var selectedShift = getShift(state.selected);
-    var selIdx = cycleIndex(state.selected);
+    var selectedShift = myShift(state.selected);
+    var selIdx = myCycleIndex(state.selected);
 
     var html = '';
     html += '<div class="wrap' + (state.expanded ? ' expanded' : '') + '">';
@@ -350,12 +420,12 @@
       // Month grid
       var grid = buildMonthGrid(state.viewYear, state.viewMonth);
       var counts = { day: 0, afternoon: 0, off: 0 };
-      grid.forEach(function (d) { if (d) counts[getShift(d)]++; });
+      grid.forEach(function (d) { if (d) counts[myShift(d)]++; });
 
       html += '<div class="month-grid">';
       grid.forEach(function (date) {
         if (!date) { html += '<div></div>'; return; }
-        var shift = getShift(date);
+        var shift = myShift(date);
         var meta = SHIFT_META[shift];
         var isToday = isSameDay(date, today);
         var isSelected = isSameDay(date, state.selected);
@@ -390,7 +460,7 @@
         html += '<div class="mini-grid">';
         miniGrid.forEach(function (date) {
           if (!date) { html += '<div></div>'; return; }
-          var shift = getShift(date);
+          var shift = myShift(date);
           var meta = SHIFT_META[shift];
           var isToday = isSameDay(date, today);
           var isSelected = isSameDay(date, state.selected);
@@ -439,6 +509,23 @@
     }
     html += '</div></div>';
 
+    // Crew status — who's working this day across all 3 crews
+    html += '<div class="crew-card"><div class="crew-title" style="display:flex;align-items:center;justify-content:space-between;">';
+    html += '<span>Who is working</span><button class="switch-link" id="switch-crew-btn">Switch</button></div>';
+    CREWS.forEach(function (crew) {
+      var cs = getShiftForCrew(crew, state.selected);
+      var meta = SHIFT_META[cs];
+      var pillBg = cs === 'off' ? '#22242B' : meta.color;
+      var pillColor = cs === 'off' ? '#7D818C' : '#15171D';
+      var isYou = crew.id === state.myCrew;
+      html += '<div class="crew-row">';
+      html += '<span class="crew-name' + (isYou ? ' you' : '') + '">' + crew.label + (isYou ? ' (you)' : '') + '</span>';
+      html += '<span class="crew-pill" style="background:' + pillBg + ';color:' + pillColor + ';">' + meta.label + '</span>';
+      html += '</div>';
+    });
+    html += '</div>';
+
+
     // Legend
     html += '<div class="legend-row">';
     ['day', 'afternoon', 'off'].forEach(function (k) {
@@ -446,7 +533,7 @@
       html += '<span class="legend-text">' + SHIFT_META[k].label + '</span>';
       if (!state.expanded) {
         var grid2 = buildMonthGrid(state.viewYear, state.viewMonth);
-        var c = 0; grid2.forEach(function (d) { if (d && getShift(d) === k) c++; });
+        var c = 0; grid2.forEach(function (d) { if (d && myShift(d) === k) c++; });
         html += '<span class="legend-count">· ' + c + '</span>';
       }
       html += '</div>';
@@ -476,6 +563,23 @@
   document.getElementById('root').addEventListener('click', function (e) {
     var t = e.target;
     var el;
+
+    if ((el = t.closest('[data-crew]'))) {
+      setMyCrew(el.getAttribute('data-crew'));
+      render(); return;
+    }
+    if ((el = t.closest('#picker-cancel'))) {
+      if (state._restoreCrew) { state.myCrew = state._restoreCrew; state._restoreCrew = null; }
+      render(); return;
+    }
+    if ((el = t.closest('#switch-crew-btn'))) {
+      var wasCrew = state.myCrew;
+      state.myCrew = null;
+      renderCrewPicker(true);
+      // restore in case they cancel; picker-cancel handler calls render() which re-checks state.myCrew
+      state._restoreCrew = wasCrew;
+      return;
+    }
 
     if ((el = t.closest('#nav-prev'))) {
       state.expanded ? jumpYear(state.viewYear - 1) : goMonth(-1);
