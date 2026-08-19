@@ -66,7 +66,7 @@
     color: #EDEBE4; display: flex; align-items: center; justify-content: center; cursor: pointer;
   }
   .nav-btn.wide { width: auto; padding: 0 18px; font-size: 12.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: #B8BCC6; }
-  .nav-btn.expand-on { color: #15171D; background: #E3B15E; border-color: #E3B15E; gap: 8px; }
+  .nav-btn.expand-on { color: #15171D; background: #F5A623; border-color: #F5A623; gap: 8px; }
   .nav-group { display: flex; gap: 8px; }
   .dow-row { display: grid; grid-template-columns: repeat(7, 1fr); margin-bottom: 6px; }
   .dow-cell { text-align: center; font-size: 10.5px; color: #565A64; font-weight: 700; letter-spacing: 0.1em; padding: 4px 0; }
@@ -118,18 +118,35 @@
   .badge-row { display: flex; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
   .badge { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 700; border-radius: 6px; padding: 3px 8px; }
   .crew-card {
-    background: #101116; border: 1px solid #1E2027; border-radius: 16px;
-    padding: 14px 16px; margin-bottom: 18px;
+    background: linear-gradient(165deg, #15171D 0%, #101116 100%);
+    border: 1px solid #22242B; border-radius: 16px;
+    padding: 16px 18px; margin-bottom: 14px;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.02);
   }
-  .crew-title { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #7D818C; font-weight: 700; margin-bottom: 10px; }
-  .crew-row { display: flex; align-items: center; justify-content: space-between; padding: 7px 0; border-top: 1px solid #1E2027; }
-  .crew-row:first-of-type { border-top: none; }
+  .crew-title {
+    font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #8F94A0; font-weight: 700;
+    margin-bottom: 12px; display: flex; align-items: center; gap: 7px;
+  }
+  .crew-title-icon { display: inline-flex; color: #565A64; flex-shrink: 0; }
+  .crew-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-top: 1px solid #1C1E24; }
+  .crew-row:first-of-type { border-top: none; padding-top: 2px; }
   .crew-name { font-size: 13.5px; font-weight: 600; color: #C8CBD3; }
   .crew-name.you { color: #F5F3ED; font-weight: 800; }
-  .crew-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 999px; }
-  .legend-row { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  .crew-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; padding: 4px 11px; border-radius: 999px; }
+  .section-divider {
+    display: flex; align-items: center; gap: 10px; margin: 28px 0 14px;
+  }
+  .section-divider .line { flex: 1; height: 1px; background: linear-gradient(90deg, #22242B, transparent); }
+  .section-divider .line.right { background: linear-gradient(270deg, #22242B, transparent); }
+  .section-divider span {
+    font-size: 10.5px; letter-spacing: 0.16em; text-transform: uppercase; color: #6E727C; font-weight: 700; white-space: nowrap;
+  }
+  .legend-row {
+    display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+    background: #101116; border: 1px solid #1E2027; border-radius: 14px; padding: 14px 16px;
+  }
   .legend-item { display: flex; align-items: center; gap: 7px; }
-  .legend-swatch { width: 9px; height: 9px; border-radius: 3px; }
+  .legend-swatch { width: 9px; height: 9px; border-radius: 3px; flex-shrink: 0; }
   .legend-text { font-size: 12.5px; color: #9A9EA8; font-weight: 500; }
   .legend-count { font-size: 12.5px; color: #565A64; }
   .picker-wrap { width: 100%; max-width: 380px; text-align: center; padding-top: 40px; }
@@ -140,7 +157,7 @@
     background: #15171D; border: 1px solid #272A33; border-radius: 12px; padding: 16px;
     cursor: pointer; text-align: left;
   }
-  .picker-btn:hover { border-color: #E3B15E; }
+  .picker-btn:hover { border-color: #F5A623; }
   .picker-cancel { margin-top: 16px; background: transparent; border: none; color: #7D818C; font-size: 13px; cursor: pointer; }
   .switch-link { background: transparent; border: none; color: #7D818C; font-size: 11px; text-decoration: underline; cursor: pointer; letter-spacing: 0.05em; text-transform: uppercase; font-weight: 600; }
 </style>
@@ -216,17 +233,17 @@
   }
 
   var SHIFT_META = {
-    day: { label: 'Day shift', sub: '7:00a – 3:00p', color: '#E3B15E' },
-    afternoon: { label: 'Afternoon shift', sub: '3:00p – 11:00p', color: '#6C80C4' },
-    midnight: { label: 'Midnight shift', sub: '11:00p – 7:00a', color: '#6E5B9E' },
+    day: { label: 'Day shift', sub: '7:00a – 3:00p', color: '#F5A623' },
+    afternoon: { label: 'Afternoon shift', sub: '3:00p – 11:00p', color: '#5C7CFA' },
+    midnight: { label: 'Midnight shift', sub: '11:00p – 7:00a', color: '#8B5CF6' },
     off: { label: 'Off', sub: 'No shift scheduled', color: '#454A58' },
-    vacation: { label: 'On vacation', sub: 'Not scheduled (vacation)', color: '#8A7CA8' },
+    vacation: { label: 'On vacation', sub: 'Not scheduled (vacation)', color: '#B565E8' },
   };
   var PICKUP_TYPES = ['day', 'afternoon', 'midnight'];
 
-  var HOLIDAY_COLOR = '#C15B72';
-  var PAYDAY_COLOR = '#4FA876';
-  var OPENING_COLOR = '#E0555A';
+  var HOLIDAY_COLOR = '#F0386E';
+  var PAYDAY_COLOR = '#22C55E';
+  var OPENING_COLOR = '#FF4D5E';
   var PAY_ANCHOR = new Date(2026, 6, 31); // today is a payday; repeats every 14 days
 
   function isPayday(date) {
@@ -241,10 +258,11 @@
   // in a Mon\u2013Sun week = all hours that day at 1.5x; 7th consecutive day worked
   // in that week = all hours that day at 2x (double time).
   var SHIFT_HOURS = 8;
-  var BASE_RATE = 42.09;
-  var OT_RATE = 63.135; // 1.5x, confirmed from pay stub
-  var DT_RATE = 84.18; // 2x, confirmed from pay stub
   var SUNDAY_PREMIUM_RATE = 2.50; // per hour, any hours worked on a Sunday
+  var DEFAULT_RATE_HISTORY = [
+    { id: 'r0', effective: Date.UTC(2020, 0, 1), rate: 37.97 },
+    { id: 'r1', effective: Date.UTC(2026, 5, 1), rate: 42.09 }, // confirmed raise, effective Jun 1, 2026
+  ];
   var PERIOD_REF_START = new Date(2026, 6, 13); // a known period start (Monday)
   var PERIOD_LEN = 14;
 
@@ -325,12 +343,16 @@
     return { totals: totals, periodCount: periodCount, from: firstPeriod.start, through: targetPeriod.end };
   }
 
-  function computeGrossPay(totals) {
-    var regularPay = totals.regular * BASE_RATE;
-    var otPay = totals.overtime * OT_RATE;
-    var dtPay = totals.doubleTime * DT_RATE;
+  function computeGrossPay(totals, periodStart) {
+    var baseRate = getBaseRateFor(periodStart);
+    var otRate = baseRate * 1.5;
+    var dtRate = baseRate * 2;
+    var regularPay = totals.regular * baseRate;
+    var otPay = totals.overtime * otRate;
+    var dtPay = totals.doubleTime * dtRate;
     var sundayPay = totals.sundayHours * SUNDAY_PREMIUM_RATE;
     return {
+      baseRate: baseRate, otRate: otRate, dtRate: dtRate,
       regularPay: regularPay, otPay: otPay, dtPay: dtPay, sundayPay: sundayPay,
       total: regularPay + otPay + dtPay + sundayPay,
     };
@@ -471,7 +493,15 @@
     chevronDown: svg('<polyline points="6 9 12 15 18 9"/>', 14),
     layoutGrid: svg('<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>', 15),
     calendarDays: svg('<rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>', 15),
+    clock: svg('<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/>', 13),
+    dollar: svg('<line x1="12" y1="2" x2="12" y2="22"/><path d="M17 5.5c0-1.7-2.2-3-5-3s-5 1.3-5 3 2.2 3 5 3 5 1.3 5 3-2.2 3-5 3-5-1.3-5-3"/>', 13),
+    trendUp: svg('<polyline points="3 17 9 11 13 15 21 6"/><polyline points="15 6 21 6 21 12"/>', 13),
+    tag: svg('<path d="M12 2H2v10l10.5 10.5a1 1 0 0 0 1.4 0l8.6-8.6a1 1 0 0 0 0-1.4L12 2Z"/><circle cx="6.5" cy="6.5" r="1.5"/>', 13),
+    briefcase: svg('<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>', 13),
+    pencil: svg('<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>', 13),
+    users: svg('<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>', 13),
   };
+  function cardIcon(iconKey) { return '<span class="crew-title-icon">' + ICON[iconKey] + '</span>'; }
   function sunIcon(color, size) {
     return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="' + color + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
       '<circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="4.5"/><line x1="12" y1="19.5" x2="12" y2="22"/>' +
@@ -498,10 +528,13 @@
     vacationPanelOpen: false,
     notes: {},
     pickups: {},
+    rateHistory: [],
+    ratePanelOpen: false,
   };
   state.vacations = loadVacations();
   state.notes = loadNotes();
   state.pickups = loadPickups();
+  state.rateHistory = loadRateHistory();
 
   function getCrew(id) {
     for (var i = 0; i < CREWS.length; i++) if (CREWS[i].id === id) return CREWS[i];
@@ -528,7 +561,7 @@
   } catch (e) { syncBlobId = null; }
 
   function cloudPayload() {
-    return { vacations: state.vacations, notes: state.notes, pickups: state.pickups };
+    return { vacations: state.vacations, notes: state.notes, pickups: state.pickups, rateHistory: state.rateHistory };
   }
 
   function pushToCloud() {
@@ -578,9 +611,11 @@
         if (data && data.vacations) state.vacations = data.vacations;
         if (data && data.notes) state.notes = data.notes;
         if (data && data.pickups) state.pickups = data.pickups;
+        if (data && data.rateHistory && data.rateHistory.length) state.rateHistory = data.rateHistory;
         try { localStorage.setItem('shiftcal_vacations', JSON.stringify(state.vacations)); } catch (e) {}
         try { localStorage.setItem('shiftcal_notes', JSON.stringify(state.notes)); } catch (e) {}
         try { localStorage.setItem('shiftcal_pickups', JSON.stringify(state.pickups)); } catch (e) {}
+        try { localStorage.setItem('shiftcal_rates', JSON.stringify(state.rateHistory)); } catch (e) {}
         syncStatus = 'synced';
         cb();
       })
@@ -708,6 +743,46 @@
     if (list.length) state.pickups[key] = list;
     else delete state.pickups[key];
     savePickups();
+  }
+
+  // ---- Pay rate history (so raises don't distort past pay periods) ----
+  function loadRateHistory() {
+    try {
+      var raw = localStorage.getItem('shiftcal_rates');
+      var parsed = raw ? JSON.parse(raw) : null;
+      if (!parsed || !parsed.length) return DEFAULT_RATE_HISTORY.slice();
+      return parsed;
+    } catch (e) { return DEFAULT_RATE_HISTORY.slice(); }
+  }
+  function saveRateHistory() {
+    try { localStorage.setItem('shiftcal_rates', JSON.stringify(state.rateHistory)); } catch (e) {}
+    if (syncBlobId) pushToCloud(); else createCloudBlob();
+  }
+  function sortedRateHistory() {
+    return state.rateHistory.slice().sort(function (a, b) { return a.effective - b.effective; });
+  }
+  function getBaseRateFor(date) {
+    var sorted = sortedRateHistory();
+    var t = dateOnlyTs(date);
+    var applicable = sorted[0] ? sorted[0].rate : 42.09;
+    for (var i = 0; i < sorted.length; i++) {
+      if (sorted[i].effective <= t) applicable = sorted[i].rate;
+      else break;
+    }
+    return applicable;
+  }
+  function addRateChange(effectiveStr, rateStr) {
+    var d = new Date(effectiveStr + 'T00:00:00');
+    var rate = parseFloat(rateStr);
+    if (isNaN(d.getTime()) || isNaN(rate) || rate <= 0) return false;
+    state.rateHistory.push({ id: 'rate' + Date.now(), effective: dateOnlyTs(d), rate: rate });
+    saveRateHistory();
+    return true;
+  }
+  function removeRateChange(id) {
+    if (state.rateHistory.length <= 1) return; // keep at least one rate on record
+    state.rateHistory = state.rateHistory.filter(function (r) { return r.id !== id; });
+    saveRateHistory();
   }
 
   function escapeAttr(s) { return String(s).replace(/"/g, '&quot;'); }
@@ -911,7 +986,7 @@
     // Picked-up shifts
     var selPickups = getPickups(state.selected);
     html += '<div class="crew-card">';
-    html += '<div class="crew-title">Picked up a shift on this day?</div>';
+    html += '<div class="crew-title">' + cardIcon('briefcase') + 'Picked up a shift on this day?</div>';
     html += '<div style="display:flex;gap:6px;margin-top:4px;">';
     PICKUP_TYPES.forEach(function (type) {
       var active = selPickups.indexOf(type) !== -1;
@@ -933,7 +1008,7 @@
     // Daily note
     var existingNote = getNote(state.selected);
     html += '<div class="crew-card">';
-    html += '<div class="crew-title">Note for this day</div>';
+    html += '<div class="crew-title">' + cardIcon('pencil') + 'Note for this day</div>';
     html += '<textarea id="note-input" placeholder="e.g. Covered the shift for Allen" style="width:100%;min-height:64px;background:#0D0E12;border:1px solid #272A33;border-radius:8px;color:#F5F3ED;padding:10px;font-size:13px;font-family:inherit;resize:vertical;box-sizing:border-box;">' + escapeHtml(existingNote) + '</textarea>';
     html += '<div style="display:flex;gap:8px;margin-top:8px;">';
     html += '<button class="quick-btn" id="note-save-btn" style="flex:1;font-weight:700;">Save note</button>';
@@ -942,7 +1017,7 @@
 
     // Crew status — who's working this day across all 3 crews
     html += '<div class="crew-card"><div class="crew-title" style="display:flex;align-items:center;justify-content:space-between;">';
-    html += '<span>Who is working</span><button class="switch-link" id="vacations-btn">Vacations</button></div>';
+    html += '<span>' + cardIcon('users') + 'Who is working</span><button class="switch-link" id="vacations-btn">Vacations</button></div>';
     CREWS.forEach(function (crew) {
       var raw = getShiftForCrew(crew, state.selected);
       var cs = effectiveShiftForCrew(crew, state.selected);
@@ -968,7 +1043,7 @@
 
     if (state.vacationPanelOpen) {
       html += '<div class="crew-card">';
-      html += '<div class="crew-title">Manage vacations</div>';
+      html += '<div class="crew-title">' + cardIcon('briefcase') + 'Manage vacations</div>';
       if (state.vacations.length === 0) {
         html += '<div style="font-size:12.5px;color:#7D818C;padding:6px 0 10px;">No vacations set.</div>';
       } else {
@@ -995,7 +1070,7 @@
         crew.members.forEach(function (m) {
           var picked = state._vacPersonDraft === m.id;
           html += '<button class="quick-btn" data-vac-person="' + m.id + '" style="' +
-            (picked ? 'border-color:#E3B15E;color:#F5F3ED;' : '') + 'flex:1;">' + m.name + '</button>';
+            (picked ? 'border-color:#F5A623;color:#F5F3ED;' : '') + 'flex:1;">' + m.name + '</button>';
         });
         html += '</div>';
       });
@@ -1034,6 +1109,7 @@
     html += '</div>';
 
     // ---- Pay & 401k summary (moved to bottom) ----
+    html += '<div class="section-divider"><div class="line"></div><span>Pay & Hours</span><div class="line right"></div></div>';
     var currentPeriod = periodContaining(state.selected);
     var periodResult = computePayPeriodHours(currentPeriod.start);
     var periodPayday = new Date(currentPeriod.end); periodPayday.setDate(periodPayday.getDate() + 5);
@@ -1043,7 +1119,7 @@
     // Selected pay period hours
     var isCurrentPeriod = daysBetween(currentPeriod.start, today) >= 0 && daysBetween(currentPeriod.start, today) <= 13;
     html += '<div class="crew-card">';
-    html += '<div class="crew-title">' + (isCurrentPeriod ? 'Current pay period' : 'Pay period') + ' \u2014 ' + fmtShort(currentPeriod.start) + '\u2013' + fmtShort(currentPeriod.end) +
+    html += '<div class="crew-title">' + cardIcon('clock') + (isCurrentPeriod ? 'Current pay period' : 'Pay period') + ' \u2014 ' + fmtShort(currentPeriod.start) + '\u2013' + fmtShort(currentPeriod.end) +
       ' <span style="color:#565A64;text-transform:none;letter-spacing:0;">(pays ' + fmtShort(periodPayday) + ')</span></div>';
     html += '<div style="display:flex;gap:10px;margin-top:6px;">';
     var hourBlocks = [
@@ -1067,7 +1143,7 @@
     var ytd = computeYTDHours(state.selected);
     var ytdTotalHrs = ytd.totals.regular + ytd.totals.overtime + ytd.totals.doubleTime;
     html += '<div class="crew-card">';
-    html += '<div class="crew-title">' + state.selected.getFullYear() + ' year-to-date hours <span style="color:#565A64;text-transform:none;letter-spacing:0;">(through ' + fmtShort(ytd.through) + ')</span></div>';
+    html += '<div class="crew-title">' + cardIcon('trendUp') + state.selected.getFullYear() + ' year-to-date hours <span style="color:#565A64;text-transform:none;letter-spacing:0;">(through ' + fmtShort(ytd.through) + ')</span></div>';
     html += '<div style="display:flex;gap:10px;margin-top:6px;">';
     var ytdBlocks = [
       { label: 'Regular', val: ytd.totals.regular, color: SHIFT_META.day.color },
@@ -1086,14 +1162,14 @@
     html += '</div>';
 
     // Estimated gross pay
-    var gross = computeGrossPay(periodResult.totals);
+    var gross = computeGrossPay(periodResult.totals, currentPeriod.start);
     html += '<div class="crew-card">';
-    html += '<div class="crew-title">Estimated gross pay \u2014 $' + BASE_RATE.toFixed(2) + '/hr base</div>';
+    html += '<div class="crew-title">' + cardIcon('dollar') + 'Estimated gross pay \u2014 $' + gross.baseRate.toFixed(2) + '/hr base</div>';
     html += '<div style="display:flex;flex-direction:column;gap:6px;margin-top:6px;font-size:13px;">';
     var payRows = [
-      ['Regular (' + periodResult.totals.regular + ' hrs \u00d7 $' + BASE_RATE.toFixed(2) + ')', gross.regularPay],
-      ['Overtime (' + periodResult.totals.overtime + ' hrs \u00d7 $' + OT_RATE.toFixed(3) + ')', gross.otPay],
-      ['Double time (' + periodResult.totals.doubleTime + ' hrs \u00d7 $' + DT_RATE.toFixed(2) + ')', gross.dtPay],
+      ['Regular (' + periodResult.totals.regular + ' hrs \u00d7 $' + gross.baseRate.toFixed(2) + ')', gross.regularPay],
+      ['Overtime (' + periodResult.totals.overtime + ' hrs \u00d7 $' + gross.otRate.toFixed(3) + ')', gross.otPay],
+      ['Double time (' + periodResult.totals.doubleTime + ' hrs \u00d7 $' + gross.dtRate.toFixed(2) + ')', gross.dtPay],
       ['Sunday premium (' + periodResult.totals.sundayHours + ' hrs \u00d7 $' + SUNDAY_PREMIUM_RATE.toFixed(2) + ')', gross.sundayPay],
     ];
     payRows.forEach(function (row) {
@@ -1109,7 +1185,7 @@
     // Take-home pay + 401k
     var take = computeTakeHome(gross.total);
     html += '<div class="crew-card">';
-    html += '<div class="crew-title">Estimated take-home pay & 401k</div>';
+    html += '<div class="crew-title">' + cardIcon('dollar') + 'Estimated take-home pay & 401k</div>';
 
     html += '<div style="font-size:11px;color:#7D818C;font-weight:700;margin:4px 0 6px;">401K CONTRIBUTIONS</div>';
     html += '<div style="display:flex;gap:10px;margin-bottom:10px;">';
@@ -1142,6 +1218,35 @@
     html += '<div style="font-size:10.5px;color:#565A64;margin-top:8px;">Calibrated from 6 of your actual pay stubs across a wide range of gross pay. OASDI/Medicare are exact; federal/state withholding use a fitted model (not real IRS tables) so they\u2019ll still drift a bit, especially on unusually light or heavy OT periods. Union dues average ~$30/period since it doesn\u2019t charge every check.</div>';
     html += '</div>';
 
+    // Pay rate history
+    html += '<div class="crew-card">';
+    html += '<div class="crew-title" style="display:flex;align-items:center;justify-content:space-between;"><span>' + cardIcon('tag') + 'Pay rate history</span><button class="switch-link" id="rates-btn">' + (state.ratePanelOpen ? 'Close' : 'Edit') + '</button></div>';
+    var sortedRates = sortedRateHistory();
+    html += '<div style="display:flex;flex-direction:column;gap:5px;margin-top:4px;">';
+    sortedRates.forEach(function (r, i) {
+      var isLast = i === sortedRates.length - 1;
+      var effDate = new Date(r.effective);
+      html += '<div class="crew-row">';
+      html += '<span class="crew-name' + (isLast ? ' you' : '') + '">$' + r.rate.toFixed(2) + '/hr' + (isLast ? ' (current)' : '') +
+        ' <span style="color:#7D818C;font-weight:500;">since ' + fmtShort(effDate) + '</span></span>';
+      if (state.ratePanelOpen && sortedRates.length > 1) {
+        html += '<button class="switch-link" data-remove-rate="' + r.id + '" style="color:' + OPENING_COLOR + ';">Remove</button>';
+      }
+      html += '</div>';
+    });
+    html += '</div>';
+    if (state.ratePanelOpen) {
+      html += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid #1E2027;">';
+      html += '<div style="font-size:12px;color:#9A9EA8;margin-bottom:8px;font-weight:600;">Add a rate change (e.g. a raise)</div>';
+      html += '<div style="display:flex;gap:6px;align-items:center;margin-bottom:10px;">';
+      html += '<input type="date" id="rate-eff-date" style="flex:1;background:#0D0E12;border:1px solid #272A33;border-radius:8px;color:#F5F3ED;padding:8px;font-size:13px;">';
+      html += '<input type="number" step="0.01" id="rate-value" placeholder="$/hr" style="width:90px;background:#0D0E12;border:1px solid #272A33;border-radius:8px;color:#F5F3ED;padding:8px;font-size:13px;">';
+      html += '</div>';
+      html += '<button class="quick-btn" id="rate-add-btn" style="width:100%;font-weight:700;">Save rate change</button>';
+      html += '</div>';
+    }
+    html += '</div>';
+
     html += '</div>'; // .wrap
 
     root.innerHTML = html;
@@ -1171,6 +1276,21 @@
         setTimeout(function () { render(); }, 1200);
       } catch (e) {}
       return;
+    }
+    if ((el = t.closest('#rates-btn'))) {
+      state.ratePanelOpen = !state.ratePanelOpen;
+      render(); return;
+    }
+    if ((el = t.closest('#rate-add-btn'))) {
+      var effEl = document.getElementById('rate-eff-date');
+      var valEl = document.getElementById('rate-value');
+      var added = addRateChange(effEl ? effEl.value : '', valEl ? valEl.value : '');
+      if (added) render();
+      return;
+    }
+    if ((el = t.closest('[data-remove-rate]'))) {
+      removeRateChange(el.getAttribute('data-remove-rate'));
+      render(); return;
     }
     if ((el = t.closest('#vacations-btn'))) {
       state.vacationPanelOpen = !state.vacationPanelOpen;
