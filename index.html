@@ -241,9 +241,10 @@
   };
   var PICKUP_TYPES = ['day', 'afternoon', 'midnight'];
 
-  var HOLIDAY_COLOR = '#F0386E';
+  var HOLIDAY_COLOR = '#9CA3AF';
   var PAYDAY_COLOR = '#22C55E';
-  var OPENING_COLOR = '#FF4D5E';
+  var OPENING_COLOR = '#F5F3ED';
+  var DANGER_COLOR = '#FF4D5E';
   var PAY_ANCHOR = new Date(2026, 6, 31); // today is a payday; repeats every 14 days
 
   function isPayday(date) {
@@ -804,7 +805,7 @@
     // Eyebrow
     html += '<div class="eyebrow"><span class="line"></span>Rotation · 8 on · 4 off · 7 on · 2 off</div>';
     var syncLabel = syncStatus === 'syncing' ? 'Syncing\u2026' : syncStatus === 'error' ? 'Sync error \u2014 saved on this device only' : syncBlobId ? 'Synced' : 'Not synced yet';
-    var syncColor = syncStatus === 'error' ? OPENING_COLOR : syncBlobId ? PAYDAY_COLOR : '#565A64';
+    var syncColor = syncStatus === 'error' ? DANGER_COLOR : syncBlobId ? PAYDAY_COLOR : '#565A64';
     html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:18px;">';
     html += '<span style="width:6px;height:6px;border-radius:50%;background:' + syncColor + ';flex-shrink:0;"></span>';
     html += '<span style="font-size:11px;color:#7D818C;">' + syncLabel + '</span>';
@@ -1012,7 +1013,7 @@
     html += '<textarea id="note-input" placeholder="e.g. Covered the shift for Allen" style="width:100%;min-height:64px;background:#0D0E12;border:1px solid #272A33;border-radius:8px;color:#F5F3ED;padding:10px;font-size:13px;font-family:inherit;resize:vertical;box-sizing:border-box;">' + escapeHtml(existingNote) + '</textarea>';
     html += '<div style="display:flex;gap:8px;margin-top:8px;">';
     html += '<button class="quick-btn" id="note-save-btn" style="flex:1;font-weight:700;">Save note</button>';
-    if (existingNote) html += '<button class="quick-btn" id="note-clear-btn" style="color:' + OPENING_COLOR + ';">Clear</button>';
+    if (existingNote) html += '<button class="quick-btn" id="note-clear-btn" style="color:' + DANGER_COLOR + ';">Clear</button>';
     html += '</div></div>';
 
     // Crew status — who's working this day across all 3 crews
@@ -1032,7 +1033,7 @@
       var roleLine = present.map(function (m) { return m.name + ' (' + roleForPerson(crew, m.id, state.selected) + ')'; }).join(' \u00b7 ');
       if (roleLine) html += '<br><span style="font-size:11px;font-weight:500;color:#7D818C;">' + roleLine + '</span>';
       if (missing.length && cs !== 'vacation') {
-        html += '<br><span style="font-size:11px;font-weight:500;color:' + OPENING_COLOR + ';">' +
+        html += '<br><span style="font-size:11px;font-weight:500;color:' + DANGER_COLOR + ';">' +
           missing.map(function (m) { return m.name + ' (' + roleForPerson(crew, m.id, state.selected) + ')'; }).join(' & ') + ' out \u2014 needs ' + missing.length + '</span>';
       }
       html += '</span>';
@@ -1055,7 +1056,7 @@
           html += '<span class="crew-name">' + (person ? person.name : v.personId) + ' <span style="color:#7D818C;font-weight:500;">(' + fmt(s) + '\u2013' + fmt(e) + ')</span></span>';
           html += '<span style="display:flex;gap:10px;">';
           html += '<button class="switch-link" data-edit-vacation="' + v.id + '">Edit</button>';
-          html += '<button class="switch-link" data-remove-vacation="' + v.id + '" style="color:' + OPENING_COLOR + ';">Remove</button>';
+          html += '<button class="switch-link" data-remove-vacation="' + v.id + '" style="color:' + DANGER_COLOR + ';">Remove</button>';
           html += '</span>';
           html += '</div>';
         });
@@ -1124,7 +1125,7 @@
     html += '<div style="display:flex;gap:10px;margin-top:6px;">';
     var hourBlocks = [
       { label: 'Regular', val: periodResult.totals.regular, color: SHIFT_META.day.color },
-      { label: 'Overtime (1.5x)', val: periodResult.totals.overtime, color: OPENING_COLOR },
+      { label: 'Overtime (1.5x)', val: periodResult.totals.overtime, color: DANGER_COLOR },
       { label: 'Double time (2x)', val: periodResult.totals.doubleTime, color: HOLIDAY_COLOR },
     ];
     hourBlocks.forEach(function (b) {
@@ -1147,7 +1148,7 @@
     html += '<div style="display:flex;gap:10px;margin-top:6px;">';
     var ytdBlocks = [
       { label: 'Regular', val: ytd.totals.regular, color: SHIFT_META.day.color },
-      { label: 'Overtime', val: ytd.totals.overtime, color: OPENING_COLOR },
+      { label: 'Overtime', val: ytd.totals.overtime, color: DANGER_COLOR },
       { label: 'Double time', val: ytd.totals.doubleTime, color: HOLIDAY_COLOR },
     ];
     ytdBlocks.forEach(function (b) {
@@ -1230,7 +1231,7 @@
       html += '<span class="crew-name' + (isLast ? ' you' : '') + '">$' + r.rate.toFixed(2) + '/hr' + (isLast ? ' (current)' : '') +
         ' <span style="color:#7D818C;font-weight:500;">since ' + fmtShort(effDate) + '</span></span>';
       if (state.ratePanelOpen && sortedRates.length > 1) {
-        html += '<button class="switch-link" data-remove-rate="' + r.id + '" style="color:' + OPENING_COLOR + ';">Remove</button>';
+        html += '<button class="switch-link" data-remove-rate="' + r.id + '" style="color:' + DANGER_COLOR + ';">Remove</button>';
       }
       html += '</div>';
     });
