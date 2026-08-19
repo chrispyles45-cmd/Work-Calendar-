@@ -145,9 +145,9 @@
   var ANCHOR = new Date(2026, 6, 31);
   var CYCLE_LEN = 21;
   var CREWS = [
-    { id: 'cj', label: 'Chris/CJ', abbr: 'CJ', anchor: new Date(2026, 6, 31) },
-    { id: 'ab', label: 'Allen/Brad', abbr: 'AB', anchor: new Date(2026, 7, 7) },
-    { id: 'bj', label: 'Bill/Justin', abbr: 'BJ', anchor: new Date(2026, 6, 24) },
+    { id: 'cj', label: 'Chris/CJ', abbr: 'CJ', anchor: new Date(2026, 6, 31), members: [{ id: 'cj_chris', name: 'Chris' }, { id: 'cj_cj', name: 'CJ' }] },
+    { id: 'ab', label: 'Allen/Brad', abbr: 'AB', anchor: new Date(2026, 7, 7), members: [{ id: 'ab_allen', name: 'Allen' }, { id: 'ab_brad', name: 'Brad' }] },
+    { id: 'bj', label: 'Bill/Justin', abbr: 'BJ', anchor: new Date(2026, 6, 24), members: [{ id: 'bj_bill', name: 'Bill' }, { id: 'bj_justin', name: 'Justin' }] },
   ];
   var CYCLE_SEGMENTS = [
     { len: 8, type: 'day' },
@@ -180,14 +180,40 @@
   function getShift(date) { return shiftFromIndex(cycleIndex(date)); }
   function getShiftForCrew(crew, date) { return shiftFromIndex(cycleIndexFor(crew.anchor, date)); }
 
+  // ---- Front/Back role rotation ----
+  // Each crew's two members swap "Front" and "Back" jobs every time they return
+  // from their 4-day break (i.e. at the day-block -> afternoon-block transition).
+  // They do NOT swap after the short 2-day break (afternoon-block -> day-block).
+  // Calibrated to a known fixed date rather than "today" (which changes) so it stays
+  // correct regardless of when someone opens the page.
+  var ROLE_CALIBRATION_DATE = new Date(2026, 7, 19); // Aug 19, 2026
+  var BACK_PERSON_AT_CALIBRATION = { cj: 'cj_chris', ab: 'ab_allen', bj: 'bj_justin' };
+
+  function toggleCount(anchor, date) {
+    var idx = cycleIndexFor(anchor, date);
+    var cycleNum = Math.floor(daysBetween(anchor, date) / CYCLE_LEN);
+    return cycleNum + (idx >= 12 ? 1 : 0);
+  }
+  function roleForPerson(crew, personId, date) {
+    var backId = BACK_PERSON_AT_CALIBRATION[crew.id];
+    if (!backId) return null;
+    var diff = toggleCount(crew.anchor, date) - toggleCount(crew.anchor, ROLE_CALIBRATION_DATE);
+    var sameParity = ((diff % 2) + 2) % 2 === 0;
+    var isBackAtCalibration = personId === backId;
+    var isBackNow = sameParity ? isBackAtCalibration : !isBackAtCalibration;
+    return isBackNow ? 'Back' : 'Front';
+  }
+
   var SHIFT_META = {
     day: { label: 'Day shift', sub: '7:00a – 3:00p', color: '#E3B15E' },
     afternoon: { label: 'Afternoon shift', sub: '3:00p – 11:00p', color: '#6C80C4' },
     off: { label: 'Off', sub: 'No shift scheduled', color: '#454A58' },
+    vacation: { label: 'On vacation', sub: 'Not scheduled (vacation)', color: '#8A7CA8' },
   };
 
   var HOLIDAY_COLOR = '#C15B72';
   var PAYDAY_COLOR = '#4FA876';
+  var OPENING_COLOR = '#E0555A';
   var PAY_ANCHOR = new Date(2026, 6, 31); // today is a payday; repeats every 14 days
 
   function isPayday(date) {
@@ -314,7 +340,12 @@
     yearPickerOpen: false,
     expanded: false,
     myCrew: savedCrew,
+    vacations: [],
+    vacationPanelOpen: false,
+    notes: {},
   };
+  state.vacations = loadVacations();
+  state.notes = loadNotes();
 
   function getCrew(id) {
     for (var i = 0; i < CREWS.length; i++) if (CREWS[i].id === id) return CREWS[i];
@@ -331,7 +362,98 @@
     try { localStorage.setItem('shiftcal_crew', id); } catch (e) {}
   }
 
+  // ---- Vacations (per-person, stored locally on this device only) ----
+  function loadVacations() {
+    try {
+      var raw = localStorage.getItem('shiftcal_vacations');
+      if (!raw) return [];
+      var parsed = JSON.parse(raw);
+      return parsed.map(function (v) { return { id: v.id, personId: v.personId, start: v.start, end: v.end }; });
+    } catch (e) { return []; }
+  }
+  function saveVacations() {
+    try { localStorage.setItem('shiftcal_vacations', JSON.stringify(state.vacations)); } catch (e) {}
+  }
+  function dateOnlyTs(d) { return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()); }
+  function getPerson(personId) {
+    for (var i = 0; i < CREWS.length; i++) {
+      var m = CREWS[i].members.find(function (m) { return m.id === personId; });
+      if (m) return m;
+    }
+    return null;
+  }
+  function isPersonOnVacation(personId, date) {
+    var t = dateOnlyTs(date);
+    for (var i = 0; i < state.vacations.length; i++) {
+      var v = state.vacations[i];
+      if (v.personId === personId && t >= v.start && t <= v.end) return true;
+    }
+    return false;
+  }
+  function membersOnVacation(crew, date) {
+    return crew.members.filter(function (m) { return isPersonOnVacation(m.id, date); });
+  }
+  function crewFullyOut(crew, date) {
+    return crew.members.every(function (m) { return isPersonOnVacation(m.id, date); });
+  }
+  function effectiveShiftForCrew(crew, date) {
+    if (crewFullyOut(crew, date)) return 'vacation';
+    return getShiftForCrew(crew, date);
+  }
+  function myEffectiveShift(date) {
+    var c = getCrew(state.myCrew);
+    return c ? effectiveShiftForCrew(c, date) : myShift(date);
+  }
+  // Returns array of { shift: 'day'|'afternoon', crew, missing: [members], needed: 1 or 2 }
+  function getOpenings(date) {
+    var openings = [];
+    CREWS.forEach(function (crew) {
+      var raw = getShiftForCrew(crew, date);
+      if (raw !== 'day' && raw !== 'afternoon') return;
+      var missing = membersOnVacation(crew, date);
+      if (missing.length > 0) {
+        openings.push({ shift: raw, crew: crew, missing: missing, needed: missing.length });
+      }
+    });
+    return openings;
+  }
+  function addVacation(personId, startStr, endStr) {
+    if (!personId || !startStr || !endStr) return false;
+    var s = new Date(startStr + 'T00:00:00');
+    var e = new Date(endStr + 'T00:00:00');
+    if (isNaN(s) || isNaN(e) || e < s) return false;
+    state.vacations.push({ id: 'v' + Date.now(), personId: personId, start: dateOnlyTs(s), end: dateOnlyTs(e) });
+    saveVacations();
+    return true;
+  }
+  function removeVacation(id) {
+    state.vacations = state.vacations.filter(function (v) { return v.id !== id; });
+    saveVacations();
+  }
+
+  // ---- Daily notes (stored locally on this device only) ----
+  function loadNotes() {
+    try {
+      var raw = localStorage.getItem('shiftcal_notes');
+      return raw ? JSON.parse(raw) : {};
+    } catch (e) { return {}; }
+  }
+  function saveNotes() {
+    try { localStorage.setItem('shiftcal_notes', JSON.stringify(state.notes)); } catch (e) {}
+  }
+  function getNote(date) { return state.notes[dateKey(date)] || ''; }
+  function setNote(date, text) {
+    var key = dateKey(date);
+    text = (text || '').trim();
+    if (text) state.notes[key] = text;
+    else delete state.notes[key];
+    saveNotes();
+  }
+
   function escapeAttr(s) { return String(s).replace(/"/g, '&quot;'); }
+  function escapeHtml(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
 
   function renderCrewPicker(switching) {
     var root = document.getElementById('root');
@@ -355,7 +477,7 @@
     var holidayMap = buildHolidayMap(state.viewYear);
     function holidayName(date) { return holidayMap[dateKey(date)] || null; }
 
-    var selectedShift = myShift(state.selected);
+    var selectedShift = myEffectiveShift(state.selected);
     var selIdx = myCycleIndex(state.selected);
 
     var html = '';
@@ -425,27 +547,38 @@
       html += '<div class="month-grid">';
       grid.forEach(function (date) {
         if (!date) { html += '<div></div>'; return; }
-        var shift = myShift(date);
+        var shift = myEffectiveShift(date);
         var meta = SHIFT_META[shift];
         var isToday = isSameDay(date, today);
         var isSelected = isSameDay(date, state.selected);
         var hName = holidayName(date);
         var pDay = isPayday(date);
-        var hasMarker = hName || pDay;
+        var opens = getOpenings(date);
+        var hasOpening = opens.length > 0;
+        var hasNote = !!getNote(date);
+        var hasMarker = hName || pDay || hasOpening;
         var baseColor = shift === 'off' ? '#15171D' : meta.color;
         var accents = [];
         if (hName) accents.push(HOLIDAY_COLOR);
         if (pDay) accents.push(PAYDAY_COLOR);
+        if (hasOpening) accents.push(OPENING_COLOR);
         var bg = buildSplitBackground(baseColor, accents);
         var textColor = hasMarker ? '#15171D' : (shift === 'off' ? '#6E727C' : '#15171D');
         var textShadow = hasMarker ? '0 0 3px rgba(245,243,237,0.5)' : 'none';
         var titleAttr = [];
         if (hName) titleAttr.push(hName);
         if (pDay) titleAttr.push('Payday');
+        if (hasOpening) titleAttr.push(opens.map(function (o) {
+          return (o.shift === 'day' ? 'Day' : 'Afternoon') + ' shift needs ' + o.needed + ' (' +
+            o.missing.map(function (m) { return m.name + ' (' + roleForPerson(o.crew, m.id, date) + ')'; }).join(', ') + ' out)';
+        }).join(', '));
+        if (hasNote) titleAttr.push('Note added');
         html += '<button class="day-btn' + (isSelected ? ' selected' : '') + (isToday ? ' today' : '') +
           '" data-ts="' + date.getTime() + '" title="' + escapeAttr(titleAttr.join(' · ')) +
           '" style="background:' + bg + ';color:' + textColor + ';text-shadow:' + textShadow + ';opacity:' + (shift === 'off' && !hasMarker ? 1 : (isSelected || hasMarker ? 1 : 0.88)) + ';">' +
-          date.getDate() + '</button>';
+          date.getDate() +
+          (hasNote ? '<span class="marker-dot" style="top:auto;bottom:3px;left:3px;right:auto;background:#F5F3ED;"></span>' : '') +
+          '</button>';
       });
       html += '</div>';
     } else {
@@ -460,23 +593,28 @@
         html += '<div class="mini-grid">';
         miniGrid.forEach(function (date) {
           if (!date) { html += '<div></div>'; return; }
-          var shift = myShift(date);
+          var shift = myEffectiveShift(date);
           var meta = SHIFT_META[shift];
           var isToday = isSameDay(date, today);
           var isSelected = isSameDay(date, state.selected);
           var hName = holidayName(date);
           var pDay = isPayday(date);
-          var hasMarker = hName || pDay;
+          var opens = getOpenings(date);
+          var hasOpening = opens.length > 0;
+          var hasMarker = hName || pDay || hasOpening;
           var miniBase = shift === 'off' ? '#20222A' : meta.color;
           var miniAccents = [];
           if (hName) miniAccents.push(HOLIDAY_COLOR);
           if (pDay) miniAccents.push(PAYDAY_COLOR);
+          if (hasOpening) miniAccents.push(OPENING_COLOR);
           var bg = buildSplitBackground(miniBase, miniAccents);
           var textColor = hasMarker ? '#15171D' : (shift === 'off' ? '#6E727C' : '#15171D');
           var textShadow = hasMarker ? '0 0 2px rgba(245,243,237,0.5)' : 'none';
           var titleAttr = [MONTH_SHORT[mIdx] + ' ' + date.getDate()];
           if (hName) titleAttr.push(hName);
           if (pDay) titleAttr.push('Payday');
+          if (hasOpening) titleAttr.push(opens.map(function (o) { return o.shift + ' needs ' + o.needed; }).join(', '));
+          if (getNote(date)) titleAttr.push('Note added');
           titleAttr.push(meta.label);
           html += '<button class="mini-btn' + (isSelected ? ' selected' : '') + (isToday ? ' today' : '') +
             '" data-ts="' + date.getTime() + '" data-mini="1" title="' + escapeAttr(titleAttr.join(' — ')) +
@@ -495,36 +633,101 @@
     html += '<div class="detail-icon" style="background:' + (selectedShift === 'off' ? '#22242B' : SHIFT_META[selectedShift].color) + ';">';
     if (selectedShift === 'day') html += sunIcon('#15171D', 20);
     else if (selectedShift === 'afternoon') html += moonIcon('#15171D', 20);
+    else if (selectedShift === 'vacation') html += '<span style="font-size:16px;">\u2708\ufe0f</span>';
     else html += '<span style="font-size:18px;color:#565A64;">—</span>';
     html += '</div>';
     html += '<div>';
     html += '<div class="detail-date">' + state.selected.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) + '</div>';
     html += '<div class="detail-label">' + SHIFT_META[selectedShift].label + '</div>';
     html += '<div class="detail-sub">' + SHIFT_META[selectedShift].sub + '</div>';
-    if (selHoliday || selPayday) {
+    var selOpenings = getOpenings(state.selected);
+    if (selHoliday || selPayday || selOpenings.length) {
       html += '<div class="badge-row">';
       if (selHoliday) html += '<div class="badge" style="color:#15171D;background:' + HOLIDAY_COLOR + ';">' + selHoliday + '</div>';
       if (selPayday) html += '<div class="badge" style="color:#F5F3ED;background:#22242B;"><span style="width:5px;height:5px;border-radius:50%;background:' + PAYDAY_COLOR + ';"></span>Payday</div>';
+      selOpenings.forEach(function (o) {
+        var whoText = o.missing.map(function (m) { return m.name + ' (' + roleForPerson(o.crew, m.id, state.selected) + ')'; }).join(' & ') + ' out';
+        html += '<div class="badge" style="color:#15171D;background:' + OPENING_COLOR + ';">' +
+          (o.shift === 'day' ? 'Day' : 'Afternoon') + ' short ' + o.needed + ' (' + o.crew.label + ': ' + whoText + ')</div>';
+      });
       html += '</div>';
     }
     html += '</div></div>';
 
+    // Daily note
+    var existingNote = getNote(state.selected);
+    html += '<div class="crew-card">';
+    html += '<div class="crew-title">Note for this day</div>';
+    html += '<textarea id="note-input" placeholder="e.g. Covered the shift for Allen" style="width:100%;min-height:64px;background:#0D0E12;border:1px solid #272A33;border-radius:8px;color:#F5F3ED;padding:10px;font-size:13px;font-family:inherit;resize:vertical;box-sizing:border-box;">' + escapeHtml(existingNote) + '</textarea>';
+    html += '<div style="display:flex;gap:8px;margin-top:8px;">';
+    html += '<button class="quick-btn" id="note-save-btn" style="flex:1;font-weight:700;">Save note</button>';
+    if (existingNote) html += '<button class="quick-btn" id="note-clear-btn" style="color:' + OPENING_COLOR + ';">Clear</button>';
+    html += '</div></div>';
+
     // Crew status — who's working this day across all 3 crews
     html += '<div class="crew-card"><div class="crew-title" style="display:flex;align-items:center;justify-content:space-between;">';
-    html += '<span>Who is working</span><button class="switch-link" id="switch-crew-btn">Switch</button></div>';
+    html += '<span>Who is working</span><span style="display:flex;gap:12px;"><button class="switch-link" id="vacations-btn">Vacations</button><button class="switch-link" id="switch-crew-btn">Switch</button></span></div>';
     CREWS.forEach(function (crew) {
-      var cs = getShiftForCrew(crew, state.selected);
+      var raw = getShiftForCrew(crew, state.selected);
+      var cs = effectiveShiftForCrew(crew, state.selected);
       var meta = SHIFT_META[cs];
-      var pillBg = cs === 'off' ? '#22242B' : meta.color;
-      var pillColor = cs === 'off' ? '#7D818C' : '#15171D';
+      var pillBg = (cs === 'off') ? '#22242B' : meta.color;
+      var pillColor = (cs === 'off') ? '#7D818C' : '#15171D';
       var isYou = crew.id === state.myCrew;
-      html += '<div class="crew-row">';
-      html += '<span class="crew-name' + (isYou ? ' you' : '') + '">' + crew.label + (isYou ? ' (you)' : '') + '</span>';
+      var missing = membersOnVacation(crew, state.selected);
+      html += '<div class="crew-row" style="align-items:flex-start;">';
+      html += '<span class="crew-name' + (isYou ? ' you' : '') + '">' + crew.label + (isYou ? ' (you)' : '');
+      if ((raw === 'day' || raw === 'afternoon')) {
+        var present = crew.members.filter(function (m) { return missing.indexOf(m) === -1; });
+        var roleLine = present.map(function (m) { return m.name + ' (' + roleForPerson(crew, m.id, state.selected) + ')'; }).join(' \u00b7 ');
+        if (roleLine) html += '<br><span style="font-size:11px;font-weight:500;color:#7D818C;">' + roleLine + '</span>';
+      }
+      if (missing.length && cs !== 'vacation') {
+        html += '<br><span style="font-size:11px;font-weight:500;color:' + OPENING_COLOR + ';">' +
+          missing.map(function (m) { return m.name + ' (' + roleForPerson(crew, m.id, state.selected) + ')'; }).join(' & ') + ' out \u2014 needs ' + missing.length + '</span>';
+      }
+      html += '</span>';
       html += '<span class="crew-pill" style="background:' + pillBg + ';color:' + pillColor + ';">' + meta.label + '</span>';
       html += '</div>';
     });
     html += '</div>';
 
+    if (state.vacationPanelOpen) {
+      html += '<div class="crew-card">';
+      html += '<div class="crew-title">Manage vacations</div>';
+      if (state.vacations.length === 0) {
+        html += '<div style="font-size:12.5px;color:#7D818C;padding:6px 0 10px;">No vacations set.</div>';
+      } else {
+        state.vacations.forEach(function (v) {
+          var person = getPerson(v.personId);
+          var s = new Date(v.start), e = new Date(v.end);
+          var fmt = function (d) { return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); };
+          html += '<div class="crew-row">';
+          html += '<span class="crew-name">' + (person ? person.name : v.personId) + ' <span style="color:#7D818C;font-weight:500;">(' + fmt(s) + '\u2013' + fmt(e) + ')</span></span>';
+          html += '<button class="switch-link" data-remove-vacation="' + v.id + '" style="color:' + OPENING_COLOR + ';">Remove</button>';
+          html += '</div>';
+        });
+      }
+      html += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid #1E2027;">';
+      html += '<div style="font-size:12px;color:#9A9EA8;margin-bottom:8px;font-weight:600;">Who\u2019s taking time off?</div>';
+      CREWS.forEach(function (crew) {
+        html += '<div style="font-size:10.5px;color:#565A64;text-transform:uppercase;letter-spacing:0.05em;margin:8px 0 4px;">' + crew.label + '</div>';
+        html += '<div style="display:flex;gap:6px;margin-bottom:4px;">';
+        crew.members.forEach(function (m) {
+          var picked = state._vacPersonDraft === m.id;
+          html += '<button class="quick-btn" data-vac-person="' + m.id + '" style="' +
+            (picked ? 'border-color:#E3B15E;color:#F5F3ED;' : '') + 'flex:1;">' + m.name + '</button>';
+        });
+        html += '</div>';
+      });
+      html += '<div style="display:flex;gap:6px;align-items:center;margin:10px 0;">';
+      html += '<input type="date" id="vac-start" style="flex:1;background:#0D0E12;border:1px solid #272A33;border-radius:8px;color:#F5F3ED;padding:8px;font-size:13px;">';
+      html += '<span style="color:#565A64;">\u2013</span>';
+      html += '<input type="date" id="vac-end" style="flex:1;background:#0D0E12;border:1px solid #272A33;border-radius:8px;color:#F5F3ED;padding:8px;font-size:13px;">';
+      html += '</div>';
+      html += '<button class="quick-btn" id="vac-add-btn" style="width:100%;font-weight:700;">Add vacation</button>';
+      html += '</div></div>';
+    }
 
     // Legend
     html += '<div class="legend-row">';
@@ -533,13 +736,16 @@
       html += '<span class="legend-text">' + SHIFT_META[k].label + '</span>';
       if (!state.expanded) {
         var grid2 = buildMonthGrid(state.viewYear, state.viewMonth);
-        var c = 0; grid2.forEach(function (d) { if (d && myShift(d) === k) c++; });
+        var c = 0; grid2.forEach(function (d) { if (d && myEffectiveShift(d) === k) c++; });
         html += '<span class="legend-count">· ' + c + '</span>';
       }
       html += '</div>';
     });
     html += '<div class="legend-item"><div class="legend-swatch" style="background:linear-gradient(135deg, #4B4F5A 50%, ' + HOLIDAY_COLOR + ' 50%);"></div><span class="legend-text">Holiday</span></div>';
     html += '<div class="legend-item"><div class="legend-swatch" style="background:linear-gradient(135deg, #4B4F5A 50%, ' + PAYDAY_COLOR + ' 50%);"></div><span class="legend-text">Payday</span></div>';
+    html += '<div class="legend-item"><div class="legend-swatch" style="background:linear-gradient(135deg, #4B4F5A 50%, ' + OPENING_COLOR + ' 50%);"></div><span class="legend-text">Opening</span></div>';
+    html += '<div class="legend-item"><div class="legend-swatch" style="background:' + SHIFT_META.vacation.color + ';"></div><span class="legend-text">Vacation</span></div>';
+    html += '<div class="legend-item"><div class="legend-swatch" style="background:#15171D;border:1.5px solid #F5F3ED;"></div><span class="legend-text">Has note</span></div>';
     html += '</div>';
 
     html += '</div>'; // .wrap
@@ -579,6 +785,36 @@
       // restore in case they cancel; picker-cancel handler calls render() which re-checks state.myCrew
       state._restoreCrew = wasCrew;
       return;
+    }
+
+    if ((el = t.closest('#vacations-btn'))) {
+      state.vacationPanelOpen = !state.vacationPanelOpen;
+      render(); return;
+    }
+    if ((el = t.closest('[data-vac-person]'))) {
+      state._vacPersonDraft = el.getAttribute('data-vac-person');
+      render(); return;
+    }
+    if ((el = t.closest('#vac-add-btn'))) {
+      var startEl = document.getElementById('vac-start');
+      var endEl = document.getElementById('vac-end');
+      var personId = state._vacPersonDraft;
+      var added = personId ? addVacation(personId, startEl ? startEl.value : '', endEl ? endEl.value : '') : false;
+      if (added) { state._vacPersonDraft = null; render(); }
+      return;
+    }
+    if ((el = t.closest('[data-remove-vacation]'))) {
+      removeVacation(el.getAttribute('data-remove-vacation'));
+      render(); return;
+    }
+    if ((el = t.closest('#note-save-btn'))) {
+      var noteEl = document.getElementById('note-input');
+      setNote(state.selected, noteEl ? noteEl.value : '');
+      render(); return;
+    }
+    if ((el = t.closest('#note-clear-btn'))) {
+      setNote(state.selected, '');
+      render(); return;
     }
 
     if ((el = t.closest('#nav-prev'))) {
