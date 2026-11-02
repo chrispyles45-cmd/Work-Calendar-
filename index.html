@@ -319,7 +319,7 @@
         var effectiveBaseType = scheduledWorkedForHours ? rawShift : null;
         var extraPickups = pickups.filter(function (p) { return p.type !== effectiveBaseType; });
         var hrs = (scheduledWorkedForHours ? SHIFT_HOURS : 0) + extraPickups.length * SHIFT_HOURS;
-        var isTradeDay = pickups.some(function (p) { return p.fromTrade; });
+        var isTradeDay = pickups.some(function (p) { return p.fromTrade; }) || isTradePickupDate(date);
 
         var displayShift = isVac ? 'vacation' : (scheduledWorkedForHours ? rawShift : (pickups.length ? pickups[0].type : 'off'));
         var entry = {
@@ -908,6 +908,11 @@
   function saveTrades() {
     try { localStorage.setItem('shiftcal_trades', JSON.stringify(state.trades)); } catch (e) {}
   }
+  // True if any logged trade says you're covering this date (the source of truth for trade days).
+  function isTradePickupDate(date) {
+    var key = dateKey(date);
+    return state.trades.some(function (t) { return dateKeyFromInputStr(t.pickup) === key; });
+  }
   function dateKeyFromInputStr(s) {
     var d = new Date(s + 'T00:00:00');
     return dateKey(d);
@@ -968,7 +973,7 @@
     // Eyebrow
     html += '<div class="eyebrow"><span class="line"></span>Rotation · 8 on · 4 off · 7 on · 2 off</div>';
     html += '<div style="display:flex;align-items:center;gap:14px;margin-bottom:18px;">';
-    html += '<span style="font-size:11px;color:#7D818C;">Saved on this device</span>';
+    html += '<span style="font-size:11px;color:#7D818C;">Saved on this device \u00b7 build 11-02b</span>';
     html += '<button class="switch-link" id="export-data-btn" style="margin-left:auto;">Export data</button>';
     html += '<button class="switch-link" id="import-data-btn">Import data</button>';
     html += '<input type="file" id="import-file-input" accept="application/json" style="display:none;">';
