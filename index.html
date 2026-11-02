@@ -285,32 +285,60 @@
       weeks[Math.floor(i / 7)].push(d);
     }
 
-    var totals = { regular: 0, overtime: 0, doubleTime: 0, sundayHours: 0 };
+    var totals = { regular: 0, overtime: 0, doubleTime: 0, sundayHours: 0, vacationHours: 0 };
     var days = [];
+    var myCrewObjForPay = getCrew(state.myCrew);
 
     weeks.forEach(function (week) {
+      // Flat 40 hrs of vacation pay for any week that includes a vacation day \u2014 confirmed
+      // from your real stubs (40 hrs \u00d7 $42.09 = $1,683.60 showed up exactly this way).
+      // This is separate from worked hours/ordinal \u2014 vacation days still contribute 0 toward
+      // the 6th/7th-day tally and 0 actual worked hours, same as before.
+      var weekHasVacation = week.some(function (d) { return isPersonOnVacation(MY_PERSON_ID, d); });
+      if (weekHasVacation) totals.vacationHours += 40;
+
       var workedOrdinal = 0;
       week.forEach(function (date) {
-        var shift = myEffectiveShift(date);
-        var scheduledWorked = shift === 'day' || shift === 'afternoon';
+        // Raw rotation shift, ignoring vacation/trades \u2014 this is what determines whether the
+        // day counts toward your weekly worked-day tally (a traded-away day still counts, since
+        // it was still "your" scheduled day \u2014 you just had someone else physically cover it).
+        var rawShift = myCrewObjForPay ? getShiftForCrew(myCrewObjForPay, date) : 'off';
+        var rawScheduledDayOrAfternoon = rawShift === 'day' || rawShift === 'afternoon';
+        var isVac = isPersonOnVacation(MY_PERSON_ID, date);
+        var isTraded = isTradedAway(date);
         var pickups = getPickups(date);
-        var worked = scheduledWorked || pickups.length > 0;
-        var entry = {
-          date: date, worked: worked, shift: shift, pickups: pickups,
-          regular: 0, overtime: 0, doubleTime: 0, hours: 0,
-        };
-        if (worked) {
-          workedOrdinal++;
-          var extraPickups = pickups.filter(function (t) { return t !== shift; });
-          var hrs = (scheduledWorked ? SHIFT_HOURS : 0) + extraPickups.length * SHIFT_HOURS;
-          entry.hours = hrs;
-          var isHol = isHolidayDate(date);
 
+        // Counts toward the weekly 6th/7th-day tally: your normal rotation day (unless you're on
+        // vacation \u2014 vacation genuinely removes you from the tally, unlike a trade), or any day
+        // you picked up a shift on.
+        var countsForOrdinal = (rawScheduledDayOrAfternoon && !isVac) || pickups.length > 0;
+
+        // Actual hours paid: only for shifts you really worked (not vacation, not traded away),
+        // plus any pickups that aren't just a redundant duplicate of that scheduled shift.
+        var scheduledWorkedForHours = rawScheduledDayOrAfternoon && !isVac && !isTraded;
+        var effectiveBaseType = scheduledWorkedForHours ? rawShift : null;
+        var extraPickups = pickups.filter(function (p) { return p.type !== effectiveBaseType; });
+        var hrs = (scheduledWorkedForHours ? SHIFT_HOURS : 0) + extraPickups.length * SHIFT_HOURS;
+        var isTradeDay = pickups.some(function (p) { return p.fromTrade; });
+
+        var displayShift = isVac ? 'vacation' : (scheduledWorkedForHours ? rawShift : (pickups.length ? pickups[0].type : 'off'));
+        var entry = {
+          date: date, worked: countsForOrdinal, shift: displayShift, pickups: pickups,
+          regular: 0, overtime: 0, doubleTime: 0, hours: hrs,
+        };
+
+        if (countsForOrdinal) {
+          workedOrdinal++;
+          var isHol = isHolidayDate(date);
           if (workedOrdinal === 7) {
             entry.doubleTime = hrs;
           } else if (workedOrdinal === 6 || isHol) {
             entry.overtime = hrs;
+          } else if (isTradeDay) {
+            // Trade-driven double: not treated as "working over 8 hrs" \u2014 it's a swap, not extra hours.
+            entry.regular = hrs;
           } else {
+            // No trade involved: hours beyond 8 on this day are daily overtime.
             entry.regular = Math.min(hrs, 8);
             entry.overtime = Math.max(0, hrs - 8);
           }
@@ -330,7 +358,7 @@
     var year = uptoDate.getFullYear();
     var firstPeriod = periodContaining(new Date(year, 0, 1));
     var targetPeriod = periodContaining(uptoDate);
-    var totals = { regular: 0, overtime: 0, doubleTime: 0 };
+    var totals = { regular: 0, overtime: 0, doubleTime: 0, vacationHours: 0 };
     var periodCount = 0;
     var cursor = new Date(firstPeriod.start);
     while (cursor.getTime() <= targetPeriod.start.getTime()) {
@@ -338,6 +366,7 @@
       totals.regular += r.totals.regular;
       totals.overtime += r.totals.overtime;
       totals.doubleTime += r.totals.doubleTime;
+      totals.vacationHours += r.totals.vacationHours || 0;
       periodCount++;
       cursor.setDate(cursor.getDate() + 14);
     }
@@ -352,49 +381,62 @@
     var otPay = totals.overtime * otRate;
     var dtPay = totals.doubleTime * dtRate;
     var sundayPay = totals.sundayHours * SUNDAY_PREMIUM_RATE;
+    var vacationPay = (totals.vacationHours || 0) * baseRate;
     return {
       baseRate: baseRate, otRate: otRate, dtRate: dtRate,
-      regularPay: regularPay, otPay: otPay, dtPay: dtPay, sundayPay: sundayPay,
-      total: regularPay + otPay + dtPay + sundayPay,
+      regularPay: regularPay, otPay: otPay, dtPay: dtPay, sundayPay: sundayPay, vacationPay: vacationPay,
+      total: regularPay + otPay + dtPay + sundayPay + vacationPay,
     };
   }
 
   // ---- Take-home pay + 401k ----
-  // Calibrated across 6 real pay stubs (Dec 2025 \u2013 Aug 2026), spanning gross
-  // pay from ~$3,966 to ~$10,893, so this holds up much better across both
-  // light and heavy-OT pay periods than a single flat-percentage estimate would.
-  var PAY_RATES = {
-    k401EmployeeRate: 0.11937,      // 401K / gross (consistent across all post-raise stubs)
-    k401EmployerMatchRatio: 1 / 3,  // employer $ per employee $ (confirmed exactly 1/3 across 4 stubs)
-    oasdiRate: 0.062,               // statutory, applied to (gross - flat pretax benefits) \u2014 confirmed exact
-    medicareRate: 0.0145,           // statutory, same base \u2014 confirmed exact
-    // Federal/state withholding modeled as linear functions of gross pay (IRS percentage-method
-    // withholding is progressive, so a flat % badly over/under-shoots on unusual OT periods).
-    // Fit via linear regression across all 6 stubs; negative results are clamped to $0.
-    fedSlope: 0.22624,
-    fedIntercept: -440.18,
-    stateSlope: 0.03164,
-    stateIntercept: -37.52,
-    flatPreTax: 103.23,   // Dental + HDHP Medical + HSA (flat premiums each period)
-    flatPostTax: 30.00,   // Union Dues \u2014 actually alternates ~$60/$0 by period, averages to ~$30
+  // Federal/state withholding modeled as linear functions of gross pay (IRS percentage-method
+  // withholding is progressive, so a flat % badly over/under-shoots on unusual OT periods).
+  // Fit via linear regression across 7 real pay stubs spanning ~$3,966\u2013$10,893 gross.
+  // These parts are fixed (statutory or fitted); the deduction amounts below are user-editable.
+  var FIXED_PAY_RATES = {
+    k401EmployerMatchRatio: 1 / 3,  // employer $ per employee $ (confirmed exactly 1/3 across stubs)
+    oasdiRate: 0.062,               // statutory
+    medicareRate: 0.0145,           // statutory
+    fedSlope: 0.22464,
+    fedIntercept: -437.28,
+    stateSlope: 0.03139,
+    stateIntercept: -37.05,
+  };
+  var DEFAULT_PAY_SETTINGS = {
+    k401EmployeeRate: 0.11937, // Traditional 401K / gross \u2014 pre-tax, reduces taxable income
+    rothK401Rate: 0,           // Roth 401K / gross \u2014 post-tax, does NOT reduce taxable income
+    dental: 3.23,
+    medical: 30.00,
+    hsa: 70.00,
+    unionAvg: 30.00, // Union Dues \u2014 alternates ~$60/$0 by period, averages to ~$30
   };
 
   function computeTakeHome(grossTotal) {
-    var k401Employee = grossTotal * PAY_RATES.k401EmployeeRate;
-    var k401Employer = k401Employee * PAY_RATES.k401EmployerMatchRatio;
-    var ficaBase = Math.max(0, grossTotal - PAY_RATES.flatPreTax);
-    var oasdi = ficaBase * PAY_RATES.oasdiRate;
-    var medicare = ficaBase * PAY_RATES.medicareRate;
-    var fed = Math.max(0, grossTotal * PAY_RATES.fedSlope + PAY_RATES.fedIntercept);
-    var state = Math.max(0, grossTotal * PAY_RATES.stateSlope + PAY_RATES.stateIntercept);
-    var preTax = k401Employee + PAY_RATES.flatPreTax;
-    var taxes = oasdi + medicare + fed + state;
-    var postTax = PAY_RATES.flatPostTax;
+    var ps = state.paySettings;
+    var flatPreTax = ps.dental + ps.medical + ps.hsa;
+    var k401Traditional = grossTotal * ps.k401EmployeeRate;
+    var k401Roth = grossTotal * (ps.rothK401Rate || 0);
+    // Employer match applies to combined Traditional + Roth employee deferral (standard behavior);
+    // the match itself lands in a pre-tax account regardless of which bucket the employee chose.
+    var k401Employer = (k401Traditional + k401Roth) * FIXED_PAY_RATES.k401EmployerMatchRatio;
+    var ficaBase = Math.max(0, grossTotal - flatPreTax);
+    var oasdi = ficaBase * FIXED_PAY_RATES.oasdiRate;
+    var medicare = ficaBase * FIXED_PAY_RATES.medicareRate;
+    // Fed/state withholding is only reduced by the Traditional side \u2014 Roth is post-tax, so it does
+    // NOT lower taxable wages (that's the whole point of Roth). The fitted model below is calibrated
+    // against gross pay with Traditional-only contributions, so it stays accurate as Traditional moves;
+    // Roth simply doesn't touch this calculation at all, which is the correct behavior for Roth.
+    var fed = Math.max(0, grossTotal * FIXED_PAY_RATES.fedSlope + FIXED_PAY_RATES.fedIntercept);
+    var state_ = Math.max(0, grossTotal * FIXED_PAY_RATES.stateSlope + FIXED_PAY_RATES.stateIntercept);
+    var preTax = k401Traditional + flatPreTax;
+    var taxes = oasdi + medicare + fed + state_;
+    var postTax = ps.unionAvg + k401Roth;
     var net = grossTotal - preTax - taxes - postTax;
     return {
-      k401Employee: k401Employee, k401Employer: k401Employer,
-      oasdi: oasdi, medicare: medicare, fed: fed, state: state,
-      flatPreTax: PAY_RATES.flatPreTax, flatPostTax: postTax,
+      k401Employee: k401Traditional, k401Traditional: k401Traditional, k401Roth: k401Roth, k401Employer: k401Employer,
+      oasdi: oasdi, medicare: medicare, fed: fed, state: state_,
+      flatPreTax: flatPreTax, flatPostTax: ps.unionAvg,
       taxes: taxes, preTax: preTax, postTax: postTax, net: net,
     };
   }
@@ -531,11 +573,39 @@
     pickups: {},
     rateHistory: [],
     ratePanelOpen: false,
+    paySettings: {},
+    paySettingsPanelOpen: false,
+    tradedAway: {},
+    trades: [],
+    tradePanelOpen: false,
+    vacationShowPast: false,
+    tradeShowPast: false,
   };
   state.vacations = loadVacations();
   state.notes = loadNotes();
   state.pickups = loadPickups();
   state.rateHistory = loadRateHistory();
+  state.paySettings = loadPaySettings();
+  state.tradedAway = loadTradedAway();
+  state.trades = loadTrades();
+
+  // Trades logged before trade-tracking existed left their pickup as a plain, unlinked entry,
+  // so the pay math treated that day as an ordinary double (daily OT) instead of a swap.
+  // Re-link each one to its trade on load.
+  (function linkLegacyTradePickups() {
+    var changed = false;
+    state.trades.forEach(function (t) {
+      var pKey = dateKeyFromInputStr(t.pickup);
+      var list = state.pickups[pKey] || [];
+      if (list.some(function (p) { return p.tradeId === t.id; })) return;
+      var idx = list.findIndex(function (p) { return p.type === t.pickupShift && !p.fromTrade; });
+      if (idx !== -1) {
+        list[idx] = { type: list[idx].type, fromTrade: true, tradeId: t.id };
+        changed = true;
+      }
+    });
+    if (changed) savePickups();
+  })();
 
   function getCrew(id) {
     for (var i = 0; i < CREWS.length; i++) if (CREWS[i].id === id) return CREWS[i];
@@ -550,77 +620,26 @@
 
   // ---- Vacations (per-person, stored locally on this device only) ----
   // ---- Cloud sync (so this isn't stuck on one device/browser) ----
-  // Uses jsonblob.com, a free no-signup JSON store. Your data's "location" is a
-  // blob ID that gets added to the page URL as ?data=ID — bookmark that URL (or
-  // save it somewhere) to access the same data from any device/browser.
-  var SYNC_BASE = 'https://jsonblob.com/api/jsonBlob';
-  var syncBlobId = null;
-  var syncStatus = 'idle'; // idle | syncing | synced | error
-  try {
-    var urlParams = new URLSearchParams(window.location.search);
-    syncBlobId = urlParams.get('data') || localStorage.getItem('shiftcal_blob_id') || null;
-  } catch (e) { syncBlobId = null; }
-
-  function cloudPayload() {
-    return { vacations: state.vacations, notes: state.notes, pickups: state.pickups, rateHistory: state.rateHistory };
+  // Data lives in localStorage on this device only. Use Export/Import (further
+  // down) to back it up or move it to another device \u2014 no external server
+  // involved, so there's nothing that can silently fail or go down.
+  function allAppData() {
+    return {
+      vacations: state.vacations, notes: state.notes, pickups: state.pickups, rateHistory: state.rateHistory,
+      paySettings: state.paySettings, tradedAway: state.tradedAway, trades: state.trades,
+    };
   }
-
-  function pushToCloud() {
-    if (!syncBlobId) return;
-    syncStatus = 'syncing';
-    fetch(SYNC_BASE + '/' + syncBlobId, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(cloudPayload()),
-    }).then(function (res) {
-      syncStatus = res.ok ? 'synced' : 'error';
-      render();
-    }).catch(function () { syncStatus = 'error'; render(); });
-  }
-
-  function createCloudBlob() {
-    syncStatus = 'syncing';
-    fetch(SYNC_BASE, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(cloudPayload()),
-    }).then(function (res) {
-      var loc = res.headers.get('Location');
-      if (loc) {
-        var id = loc.split('/').pop();
-        syncBlobId = id;
-        try { localStorage.setItem('shiftcal_blob_id', id); } catch (e) {}
-        try {
-          var url = new URL(window.location.href);
-          url.searchParams.set('data', id);
-          window.history.replaceState({}, '', url);
-        } catch (e) {}
-        syncStatus = 'synced';
-      } else {
-        syncStatus = 'error';
-      }
-      render();
-    }).catch(function () { syncStatus = 'error'; render(); });
-  }
-
-  function loadFromCloud(cb) {
-    if (!syncBlobId) { cb(); return; }
-    syncStatus = 'syncing';
-    fetch(SYNC_BASE + '/' + syncBlobId)
-      .then(function (res) { if (!res.ok) throw new Error('not found'); return res.json(); })
-      .then(function (data) {
-        if (data && data.vacations) state.vacations = data.vacations;
-        if (data && data.notes) state.notes = data.notes;
-        if (data && data.pickups) state.pickups = data.pickups;
-        if (data && data.rateHistory && data.rateHistory.length) state.rateHistory = data.rateHistory;
-        try { localStorage.setItem('shiftcal_vacations', JSON.stringify(state.vacations)); } catch (e) {}
-        try { localStorage.setItem('shiftcal_notes', JSON.stringify(state.notes)); } catch (e) {}
-        try { localStorage.setItem('shiftcal_pickups', JSON.stringify(state.pickups)); } catch (e) {}
-        try { localStorage.setItem('shiftcal_rates', JSON.stringify(state.rateHistory)); } catch (e) {}
-        syncStatus = 'synced';
-        cb();
-      })
-      .catch(function () { syncStatus = 'error'; cb(); });
+  function importAppData(data) {
+    if (!data || typeof data !== 'object') return false;
+    if (data.vacations) state.vacations = data.vacations;
+    if (data.notes) state.notes = data.notes;
+    if (data.pickups) state.pickups = data.pickups;
+    if (data.rateHistory && data.rateHistory.length) state.rateHistory = data.rateHistory;
+    if (data.paySettings) state.paySettings = Object.assign({}, DEFAULT_PAY_SETTINGS, data.paySettings);
+    if (data.tradedAway) state.tradedAway = data.tradedAway;
+    if (data.trades) state.trades = data.trades;
+    saveVacations(); saveNotes(); savePickups(); saveRateHistory(); savePaySettings(); saveTradedAway(); saveTrades();
+    return true;
   }
 
   function loadVacations() {
@@ -633,9 +652,12 @@
   }
   function saveVacations() {
     try { localStorage.setItem('shiftcal_vacations', JSON.stringify(state.vacations)); } catch (e) {}
-    if (syncBlobId) pushToCloud(); else createCloudBlob();
   }
-  function dateOnlyTs(d) { return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()); }
+  function dateOnlyTs(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); }
+  function toInputDateStr(d) {
+    var y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
+    return y + '-' + m + '-' + day;
+  }
   function getPerson(personId) {
     for (var i = 0; i < CREWS.length; i++) {
       var m = CREWS[i].members.find(function (m) { return m.id === personId; });
@@ -661,9 +683,40 @@
     if (crewFullyOut(crew, date)) return 'vacation';
     return getShiftForCrew(crew, date);
   }
+  var MY_PERSON_ID = 'cj_chris'; // assumes "Chris" is you, matching Christopher Pyles on your stubs
+
   function myEffectiveShift(date) {
+    var dayPickups = getPickups(date);
+    if (dayPickups.length) return dayPickups[0].type; // show the picked-up shift's color
+    if (isPersonOnVacation(MY_PERSON_ID, date)) return 'vacation'; // your own vacation, regardless of your partner's status
+    if (isTradedAway(date)) return 'off';
     var c = getCrew(state.myCrew);
     return c ? effectiveShiftForCrew(c, date) : myShift(date);
+  }
+
+  // For PAY CALCULATIONS only: your true scheduled shift, accounting for vacation/trades but
+  // NOT pickups (pickups are added as separate extra hours in computePayPeriodHours instead).
+  // Kept deliberately separate from myEffectiveShift, which is for the calendar's display color
+  // and intentionally shows the pickup's color \u2014 reusing that for pay math caused pickups to
+  // silently replace the scheduled shift instead of adding to it.
+  function myScheduledShiftForPay(date) {
+    if (isPersonOnVacation(MY_PERSON_ID, date)) return 'vacation';
+    if (isTradedAway(date)) return 'off';
+    var c = getCrew(state.myCrew);
+    return c ? effectiveShiftForCrew(c, date) : myShift(date);
+  }
+
+  // Every distinct shift type actually worked that day (scheduled + any pickups), for showing
+  // a split color when you work a double (e.g. your normal Day shift plus a picked-up Afternoon).
+  function myWorkedShiftTypes(date) {
+    var types = [];
+    if (!isPersonOnVacation(MY_PERSON_ID, date) && !isTradedAway(date)) {
+      var c = getCrew(state.myCrew);
+      var raw = c ? getShiftForCrew(c, date) : 'off';
+      if (raw === 'day' || raw === 'afternoon') types.push(raw);
+    }
+    getPickups(date).forEach(function (p) { if (types.indexOf(p.type) === -1) types.push(p.type); });
+    return types;
   }
   // Returns array of { shift: 'day'|'afternoon', crew, missing: [members], needed: 1 or 2 }
   function getOpenings(date) {
@@ -677,6 +730,11 @@
       }
     });
     return openings;
+  }
+  // Same as getOpenings, but leaves out your own crew \u2014 for display purposes,
+  // since you already know when you're on vacation and don't need it flagged as a gap.
+  function getOtherCrewOpenings(date) {
+    return getOpenings(date).filter(function (o) { return o.crew.id !== state.myCrew; });
   }
   function addVacation(personId, startStr, endStr) {
     if (!personId || !startStr || !endStr) return false;
@@ -712,7 +770,6 @@
   }
   function saveNotes() {
     try { localStorage.setItem('shiftcal_notes', JSON.stringify(state.notes)); } catch (e) {}
-    if (syncBlobId) pushToCloud(); else createCloudBlob();
   }
   function getNote(date) { return state.notes[dateKey(date)] || ''; }
   function setNote(date, text) {
@@ -724,23 +781,33 @@
   }
 
   // ---- Picked-up shifts (extra shifts beyond your normal rotation) ----
+  // Each pickup is { type: 'day'|'afternoon'|'midnight', fromTrade: bool, tradeId? } so pay
+  // calculations can tell a trade-driven double (exempt from the daily >8hr rule) apart from a
+  // standalone pickup (which still triggers daily overtime if it pushes you over 8 hrs that day).
   function loadPickups() {
     try {
       var raw = localStorage.getItem('shiftcal_pickups');
-      return raw ? JSON.parse(raw) : {};
+      var parsed = raw ? JSON.parse(raw) : {};
+      // normalize legacy plain-string entries from before origin tracking existed
+      Object.keys(parsed).forEach(function (k) {
+        parsed[k] = parsed[k].map(function (p) {
+          return typeof p === 'string' ? { type: p, fromTrade: false } : p;
+        });
+      });
+      return parsed;
     } catch (e) { return {}; }
   }
   function savePickups() {
     try { localStorage.setItem('shiftcal_pickups', JSON.stringify(state.pickups)); } catch (e) {}
-    if (syncBlobId) pushToCloud(); else createCloudBlob();
   }
   function getPickups(date) { return state.pickups[dateKey(date)] || []; }
   function togglePickup(date, type) {
     var key = dateKey(date);
     var list = state.pickups[key] || [];
-    var idx = list.indexOf(type);
-    if (idx === -1) list = list.concat([type]);
-    else list = list.filter(function (t) { return t !== type; });
+    if (list.some(function (p) { return p.type === type && p.fromTrade; })) return; // managed via Shift Trades instead
+    var idx = list.findIndex(function (p) { return p.type === type && !p.fromTrade; });
+    if (idx === -1) list = list.concat([{ type: type, fromTrade: false }]);
+    else list = list.filter(function (p, i) { return i !== idx; });
     if (list.length) state.pickups[key] = list;
     else delete state.pickups[key];
     savePickups();
@@ -757,7 +824,6 @@
   }
   function saveRateHistory() {
     try { localStorage.setItem('shiftcal_rates', JSON.stringify(state.rateHistory)); } catch (e) {}
-    if (syncBlobId) pushToCloud(); else createCloudBlob();
   }
   function sortedRateHistory() {
     return state.rateHistory.slice().sort(function (a, b) { return a.effective - b.effective; });
@@ -786,6 +852,102 @@
     saveRateHistory();
   }
 
+  // ---- Editable pay deduction settings (401k %, HSA, dental, medical, union avg) ----
+  function loadPaySettings() {
+    try {
+      var raw = localStorage.getItem('shiftcal_pay_settings');
+      var parsed = raw ? JSON.parse(raw) : null;
+      if (!parsed) return Object.assign({}, DEFAULT_PAY_SETTINGS);
+      return Object.assign({}, DEFAULT_PAY_SETTINGS, parsed);
+    } catch (e) { return Object.assign({}, DEFAULT_PAY_SETTINGS); }
+  }
+  function savePaySettings() {
+    try { localStorage.setItem('shiftcal_pay_settings', JSON.stringify(state.paySettings)); } catch (e) {}
+  }
+  function updatePaySettings(fields) {
+    var k401 = parseFloat(fields.k401);
+    var k401Roth = parseFloat(fields.k401Roth);
+    var dental = parseFloat(fields.dental);
+    var medical = parseFloat(fields.medical);
+    var hsa = parseFloat(fields.hsa);
+    var union = parseFloat(fields.union);
+    if (!isNaN(k401)) state.paySettings.k401EmployeeRate = Math.max(0, k401) / 100;
+    if (!isNaN(k401Roth)) state.paySettings.rothK401Rate = Math.max(0, k401Roth) / 100;
+    if (!isNaN(dental)) state.paySettings.dental = Math.max(0, dental);
+    if (!isNaN(medical)) state.paySettings.medical = Math.max(0, medical);
+    if (!isNaN(hsa)) state.paySettings.hsa = Math.max(0, hsa);
+    if (!isNaN(union)) state.paySettings.unionAvg = Math.max(0, union);
+    savePaySettings();
+  }
+
+  // ---- Shift trades: gave away a scheduled shift (pairs with "Picked up a shift" for the swap) ----
+  function loadTradedAway() {
+    try {
+      var raw = localStorage.getItem('shiftcal_traded');
+      return raw ? JSON.parse(raw) : {};
+    } catch (e) { return {}; }
+  }
+  function saveTradedAway() {
+    try { localStorage.setItem('shiftcal_traded', JSON.stringify(state.tradedAway)); } catch (e) {}
+  }
+  function isTradedAway(date) { return !!state.tradedAway[dateKey(date)]; }
+  function toggleTradedAway(date) {
+    var key = dateKey(date);
+    if (state.tradedAway[key]) delete state.tradedAway[key];
+    else state.tradedAway[key] = true;
+    saveTradedAway();
+  }
+
+  // ---- Combined trade log: one action updates BOTH the day you gave away and the day you covered ----
+  function loadTrades() {
+    try {
+      var raw = localStorage.getItem('shiftcal_trades');
+      return raw ? JSON.parse(raw) : [];
+    } catch (e) { return []; }
+  }
+  function saveTrades() {
+    try { localStorage.setItem('shiftcal_trades', JSON.stringify(state.trades)); } catch (e) {}
+  }
+  function dateKeyFromInputStr(s) {
+    var d = new Date(s + 'T00:00:00');
+    return dateKey(d);
+  }
+  function addTrade(withName, giveStr, pickupStr, pickupShift) {
+    if (!giveStr || !pickupStr || !pickupShift) return false;
+    var g = new Date(giveStr + 'T00:00:00');
+    var p = new Date(pickupStr + 'T00:00:00');
+    if (isNaN(g.getTime()) || isNaN(p.getTime())) return false;
+    var id = 'trade' + Date.now();
+    state.trades.push({ id: id, withName: (withName || '').trim(), give: giveStr, pickup: pickupStr, pickupShift: pickupShift });
+
+    var gKey = dateKeyFromInputStr(giveStr);
+    state.tradedAway[gKey] = id;
+
+    var pKey = dateKeyFromInputStr(pickupStr);
+    var list = state.pickups[pKey] || [];
+    if (!list.some(function (p) { return p.type === pickupShift && p.tradeId === id; })) {
+      list = list.concat([{ type: pickupShift, fromTrade: true, tradeId: id }]);
+    }
+    state.pickups[pKey] = list;
+
+    saveTrades(); saveTradedAway(); savePickups();
+    return true;
+  }
+  function removeTrade(id) {
+    var t = state.trades.find(function (x) { return x.id === id; });
+    if (!t) return;
+    state.trades = state.trades.filter(function (x) { return x.id !== id; });
+
+    var gKey = dateKeyFromInputStr(t.give);
+    if (state.tradedAway[gKey] === id) delete state.tradedAway[gKey];
+
+    var pKey = dateKeyFromInputStr(t.pickup);
+    var list = (state.pickups[pKey] || []).filter(function (p) { return p.tradeId !== id; });
+    if (list.length) state.pickups[pKey] = list; else delete state.pickups[pKey];
+
+    saveTrades(); saveTradedAway(); savePickups();
+  }
+
   function escapeAttr(s) { return String(s).replace(/"/g, '&quot;'); }
   function escapeHtml(s) {
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -795,6 +957,7 @@
     var root = document.getElementById('root');
     var holidayMap = buildHolidayMap(state.viewYear);
     function holidayName(date) { return holidayMap[dateKey(date)] || null; }
+    var fmtShort = function (d) { return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); };
 
     var selectedShift = myEffectiveShift(state.selected);
     var selIdx = myCycleIndex(state.selected);
@@ -804,12 +967,11 @@
 
     // Eyebrow
     html += '<div class="eyebrow"><span class="line"></span>Rotation · 8 on · 4 off · 7 on · 2 off</div>';
-    var syncLabel = syncStatus === 'syncing' ? 'Syncing\u2026' : syncStatus === 'error' ? 'Sync error \u2014 saved on this device only' : syncBlobId ? 'Synced' : 'Not synced yet';
-    var syncColor = syncStatus === 'error' ? DANGER_COLOR : syncBlobId ? PAYDAY_COLOR : '#565A64';
-    html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:18px;">';
-    html += '<span style="width:6px;height:6px;border-radius:50%;background:' + syncColor + ';flex-shrink:0;"></span>';
-    html += '<span style="font-size:11px;color:#7D818C;">' + syncLabel + '</span>';
-    if (syncBlobId) html += '<button class="switch-link" id="copy-link-btn" style="margin-left:auto;">Copy sync link</button>';
+    html += '<div style="display:flex;align-items:center;gap:14px;margin-bottom:18px;">';
+    html += '<span style="font-size:11px;color:#7D818C;">Saved on this device</span>';
+    html += '<button class="switch-link" id="export-data-btn" style="margin-left:auto;">Export data</button>';
+    html += '<button class="switch-link" id="import-data-btn">Import data</button>';
+    html += '<input type="file" id="import-file-input" accept="application/json" style="display:none;">';
     html += '</div>';
 
     // Header
@@ -879,14 +1041,17 @@
         var isSelected = isSameDay(date, state.selected);
         var hName = holidayName(date);
         var pDay = isPayday(date);
-        var opens = getOpenings(date);
+        var opens = getOtherCrewOpenings(date);
         var hasOpening = opens.length > 0;
         var hasNote = !!getNote(date);
         var datePickups = getPickups(date);
         var hasPickup = datePickups.length > 0;
-        var hasMarker = hName || pDay || hasOpening;
+        var workedTypes = myWorkedShiftTypes(date);
+        var isDouble = workedTypes.length > 1;
+        var hasMarker = hName || pDay || hasOpening || isDouble;
         var baseColor = shift === 'off' ? '#15171D' : meta.color;
         var accents = [];
+        if (isDouble) { baseColor = SHIFT_META[workedTypes[0]].color; workedTypes.slice(1).forEach(function (t) { accents.push(SHIFT_META[t].color); }); }
         if (hName) accents.push(HOLIDAY_COLOR);
         if (pDay) accents.push(PAYDAY_COLOR);
         if (hasOpening) accents.push(OPENING_COLOR);
@@ -894,6 +1059,7 @@
         var textColor = hasMarker ? '#15171D' : (shift === 'off' ? '#6E727C' : '#15171D');
         var textShadow = hasMarker ? '0 0 3px rgba(245,243,237,0.5)' : 'none';
         var titleAttr = [];
+        if (isDouble) titleAttr.push('Double: ' + workedTypes.map(function (t) { return SHIFT_META[t].label; }).join(' + '));
         if (hName) titleAttr.push(hName);
         if (pDay) titleAttr.push('Payday');
         if (hasOpening) titleAttr.push(opens.map(function (o) {
@@ -929,11 +1095,14 @@
           var isSelected = isSameDay(date, state.selected);
           var hName = holidayName(date);
           var pDay = isPayday(date);
-          var opens = getOpenings(date);
+          var opens = getOtherCrewOpenings(date);
           var hasOpening = opens.length > 0;
-          var hasMarker = hName || pDay || hasOpening;
+          var miniWorkedTypes = myWorkedShiftTypes(date);
+          var miniIsDouble = miniWorkedTypes.length > 1;
+          var hasMarker = hName || pDay || hasOpening || miniIsDouble;
           var miniBase = shift === 'off' ? '#20222A' : meta.color;
           var miniAccents = [];
+          if (miniIsDouble) { miniBase = SHIFT_META[miniWorkedTypes[0]].color; miniWorkedTypes.slice(1).forEach(function (t) { miniAccents.push(SHIFT_META[t].color); }); }
           if (hName) miniAccents.push(HOLIDAY_COLOR);
           if (pDay) miniAccents.push(PAYDAY_COLOR);
           if (hasOpening) miniAccents.push(OPENING_COLOR);
@@ -941,6 +1110,7 @@
           var textColor = hasMarker ? '#15171D' : (shift === 'off' ? '#6E727C' : '#15171D');
           var textShadow = hasMarker ? '0 0 2px rgba(245,243,237,0.5)' : 'none';
           var titleAttr = [MONTH_SHORT[mIdx] + ' ' + date.getDate()];
+          if (miniIsDouble) titleAttr.push('Double shift');
           if (hName) titleAttr.push(hName);
           if (pDay) titleAttr.push('Payday');
           if (hasOpening) titleAttr.push(opens.map(function (o) { return o.shift + ' needs ' + o.needed; }).join(', '));
@@ -970,7 +1140,7 @@
     html += '<div class="detail-date">' + state.selected.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) + '</div>';
     html += '<div class="detail-label">' + SHIFT_META[selectedShift].label + '</div>';
     html += '<div class="detail-sub">' + SHIFT_META[selectedShift].sub + '</div>';
-    var selOpenings = getOpenings(state.selected);
+    var selOpenings = getOtherCrewOpenings(state.selected);
     if (selHoliday || selPayday || selOpenings.length) {
       html += '<div class="badge-row">';
       if (selHoliday) html += '<div class="badge" style="color:#15171D;background:' + HOLIDAY_COLOR + ';">' + selHoliday + '</div>';
@@ -984,25 +1154,97 @@
     }
     html += '</div></div>';
 
-    // Picked-up shifts
+    // Shift changes: picked up extra shifts, and/or gave away a scheduled one (trades)
     var selPickups = getPickups(state.selected);
+    var myCrewObj = getCrew(state.myCrew);
+    var selRawShift = myCrewObj ? getShiftForCrew(myCrewObj, state.selected) : 'off';
+    var selIsTraded = isTradedAway(state.selected);
     html += '<div class="crew-card">';
-    html += '<div class="crew-title">' + cardIcon('briefcase') + 'Picked up a shift on this day?</div>';
-    html += '<div style="display:flex;gap:6px;margin-top:4px;">';
+    html += '<div class="crew-title">' + cardIcon('briefcase') + 'Shift changes on this day</div>';
+
+    html += '<div style="font-size:11px;color:#9A9EA8;font-weight:600;margin-bottom:6px;">Picked up a shift?</div>';
+    html += '<div style="display:flex;gap:6px;">';
     PICKUP_TYPES.forEach(function (type) {
-      var active = selPickups.indexOf(type) !== -1;
+      var active = selPickups.some(function (p) { return p.type === type; });
       html += '<button class="quick-btn" data-toggle-pickup="' + type + '" style="flex:1;' +
         (active ? 'border-color:' + SHIFT_META[type].color + ';color:#F5F3ED;background:' + SHIFT_META[type].color + '22;' : '') +
         '">' + (type === 'day' ? 'Day' : type === 'afternoon' ? 'Afternoon' : 'Midnight') + '</button>';
     });
     html += '</div>';
-    var selScheduledShift = myEffectiveShift(state.selected);
-    var selExtraPickups = selPickups.filter(function (t) { return t !== selScheduledShift; });
+    var selTradePickups = selPickups.filter(function (p) { return p.fromTrade; });
+    if (selTradePickups.length) {
+      html += '<div style="font-size:11px;color:#7D818C;margin-top:6px;">From a trade \u2014 manage it in Shift Trades below instead.</div>';
+    }
+    var selBaseRaw = myScheduledShiftForPay(state.selected);
+    var selScheduledShift = (selBaseRaw === 'day' || selBaseRaw === 'afternoon') ? selBaseRaw : null;
+    var selExtraPickups = selPickups.filter(function (p) { return p.type !== selScheduledShift; });
     if (selPickups.length) {
       var selDuplicate = selPickups.length - selExtraPickups.length;
       html += '<div style="font-size:11.5px;color:#7D818C;margin-top:8px;">+' + (selExtraPickups.length * SHIFT_HOURS) +
         ' extra hour' + (selExtraPickups.length * SHIFT_HOURS === 1 ? '' : 's') + ' added to this day\u2019s pay period total.' +
         (selDuplicate > 0 ? ' (' + selDuplicate + ' pickup matches your already-scheduled shift, so it doesn\u2019t add extra hours.)' : '') + '</div>';
+    }
+
+    if (selIsTraded) {
+      var selTrade = state.trades.find(function (tr) { return dateKeyFromInputStr(tr.give) === dateKey(state.selected); });
+      html += '<div style="margin-top:14px;padding-top:12px;border-top:1px solid #1E2027;">';
+      html += '<div style="font-size:11.5px;color:' + DANGER_COLOR + ';">Traded away' + (selTrade && selTrade.withName ? ' to ' + escapeHtml(selTrade.withName) : '') + ' \u2014 manage it in Shift Trades below.</div>';
+      html += '</div>';
+    }
+    html += '</div>';
+
+    // Shift Trades (combined log: one action updates both sides)
+    html += '<div class="crew-card">';
+    html += '<div class="crew-title" style="display:flex;align-items:center;justify-content:space-between;"><span>' + cardIcon('users') + 'Shift trades</span><button class="switch-link" id="trades-btn">' + (state.tradePanelOpen ? 'Close' : 'Log a trade') + '</button></div>';
+    var tradeTodayTs = dateOnlyTs(today);
+    var isTradePast = function (tr) {
+      var latest = Math.max(dateOnlyTs(new Date(tr.give + 'T00:00:00')), dateOnlyTs(new Date(tr.pickup + 'T00:00:00')));
+      return latest < tradeTodayTs;
+    };
+    var upcomingTrades = state.trades.filter(function (tr) { return !isTradePast(tr); });
+    var pastTrades = state.trades.filter(isTradePast);
+    var tradesToShow = (state.tradeShowPast ? state.trades.slice() : upcomingTrades)
+      .sort(function (a, b) { return new Date(b.give) - new Date(a.give); });
+    if (tradesToShow.length === 0) {
+      html += '<div style="font-size:12.5px;color:#7D818C;">' + (pastTrades.length && !state.tradeShowPast ? 'No upcoming trades.' : 'No trades logged.') + '</div>';
+    } else {
+      tradesToShow.forEach(function (tr) {
+        var gDate = new Date(tr.give + 'T00:00:00');
+        var pDate = new Date(tr.pickup + 'T00:00:00');
+        html += '<div class="crew-row">';
+        html += '<span class="crew-name">Gave <b>' + fmtShort(gDate) + '</b>' + (tr.withName ? ' to ' + escapeHtml(tr.withName) : '') +
+          '<br><span style="color:#7D818C;font-weight:500;">Covering ' + fmtShort(pDate) + ' (' + SHIFT_META[tr.pickupShift].label + ') instead</span></span>';
+        html += '<button class="switch-link" data-remove-trade="' + tr.id + '" style="color:' + DANGER_COLOR + ';">Remove</button>';
+        html += '</div>';
+      });
+    }
+    if (pastTrades.length > 0) {
+      html += '<button class="switch-link" id="toggle-trade-past-btn" style="margin-top:8px;">' +
+        (state.tradeShowPast ? 'Hide past' : 'Show past (' + pastTrades.length + ')') + '</button>';
+    }
+    if (state.tradePanelOpen) {
+      html += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid #1E2027;display:flex;flex-direction:column;gap:8px;">';
+      html += '<input type="text" id="trade-name" placeholder="Who\u2019s covering for you? (optional)" style="width:100%;box-sizing:border-box;background:#0D0E12;border:1px solid #272A33;border-radius:8px;color:#F5F3ED;padding:9px;font-size:13px;">';
+      html += '<div>';
+      html += '<div style="font-size:11px;color:#9A9EA8;margin-bottom:4px;">Day you gave away</div>';
+      html += '<input type="date" id="trade-give-date" style="width:100%;box-sizing:border-box;background:#0D0E12;border:1px solid #272A33;border-radius:8px;color:#F5F3ED;padding:9px;font-size:13px;">';
+      html += '</div>';
+      html += '<div>';
+      html += '<div style="font-size:11px;color:#9A9EA8;margin-bottom:4px;">Day you\u2019re covering instead</div>';
+      html += '<input type="date" id="trade-pickup-date" style="width:100%;box-sizing:border-box;background:#0D0E12;border:1px solid #272A33;border-radius:8px;color:#F5F3ED;padding:9px;font-size:13px;">';
+      html += '</div>';
+      html += '<div>';
+      html += '<div style="font-size:11px;color:#9A9EA8;margin-bottom:6px;">Shift you\u2019re covering</div>';
+      html += '<div style="display:flex;gap:6px;">';
+      PICKUP_TYPES.forEach(function (type, i) {
+        var picked = state._tradeShiftDraft === type || (!state._tradeShiftDraft && i === 0);
+        html += '<button class="quick-btn" data-trade-shift="' + type + '" style="flex:1;' +
+          (picked ? 'border-color:' + SHIFT_META[type].color + ';color:#F5F3ED;' : '') +
+          '">' + (type === 'day' ? 'Day' : type === 'afternoon' ? 'Afternoon' : 'Midnight') + '</button>';
+      });
+      html += '</div></div>';
+      html += '<button class="quick-btn" id="trade-save-btn" style="width:100%;font-weight:700;margin-top:4px;">Save trade</button>';
+      html += '</div>';
     }
     html += '</div>';
 
@@ -1032,7 +1274,7 @@
       var present = crew.members.filter(function (m) { return missing.indexOf(m) === -1; });
       var roleLine = present.map(function (m) { return m.name + ' (' + roleForPerson(crew, m.id, state.selected) + ')'; }).join(' \u00b7 ');
       if (roleLine) html += '<br><span style="font-size:11px;font-weight:500;color:#7D818C;">' + roleLine + '</span>';
-      if (missing.length && cs !== 'vacation') {
+      if (!isYou && missing.length && cs !== 'vacation') {
         html += '<br><span style="font-size:11px;font-weight:500;color:' + DANGER_COLOR + ';">' +
           missing.map(function (m) { return m.name + ' (' + roleForPerson(crew, m.id, state.selected) + ')'; }).join(' & ') + ' out \u2014 needs ' + missing.length + '</span>';
       }
@@ -1045,10 +1287,14 @@
     if (state.vacationPanelOpen) {
       html += '<div class="crew-card">';
       html += '<div class="crew-title">' + cardIcon('briefcase') + 'Manage vacations</div>';
-      if (state.vacations.length === 0) {
-        html += '<div style="font-size:12.5px;color:#7D818C;padding:6px 0 10px;">No vacations set.</div>';
+      var todayTs = dateOnlyTs(today);
+      var upcomingVacations = state.vacations.filter(function (v) { return v.end >= todayTs; });
+      var pastVacations = state.vacations.filter(function (v) { return v.end < todayTs; });
+      var vacationsToShow = state.vacationShowPast ? state.vacations.slice().sort(function (a, b) { return b.start - a.start; }) : upcomingVacations;
+      if (vacationsToShow.length === 0) {
+        html += '<div style="font-size:12.5px;color:#7D818C;padding:6px 0 10px;">' + (pastVacations.length && !state.vacationShowPast ? 'No upcoming vacations.' : 'No vacations set.') + '</div>';
       } else {
-        state.vacations.forEach(function (v) {
+        vacationsToShow.forEach(function (v) {
           var person = getPerson(v.personId);
           var s = new Date(v.start), e = new Date(v.end);
           var fmt = function (d) { return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); };
@@ -1060,6 +1306,10 @@
           html += '</span>';
           html += '</div>';
         });
+      }
+      if (pastVacations.length > 0) {
+        html += '<button class="switch-link" id="toggle-vac-past-btn" style="margin-top:8px;">' +
+          (state.vacationShowPast ? 'Hide past' : 'Show past (' + pastVacations.length + ')') + '</button>';
       }
       var editing = state._vacEditingId ? state.vacations.find(function (v) { return v.id === state._vacEditingId; }) : null;
       html += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid #1E2027;">';
@@ -1103,8 +1353,8 @@
     });
     html += '<div class="legend-item"><div class="legend-swatch" style="background:linear-gradient(135deg, #4B4F5A 50%, ' + HOLIDAY_COLOR + ' 50%);"></div><span class="legend-text">Holiday</span></div>';
     html += '<div class="legend-item"><div class="legend-swatch" style="background:linear-gradient(135deg, #4B4F5A 50%, ' + PAYDAY_COLOR + ' 50%);"></div><span class="legend-text">Payday</span></div>';
-    html += '<div class="legend-item"><div class="legend-swatch" style="background:linear-gradient(135deg, #4B4F5A 50%, ' + OPENING_COLOR + ' 50%);"></div><span class="legend-text">Opening</span></div>';
     html += '<div class="legend-item"><div class="legend-swatch" style="background:' + SHIFT_META.vacation.color + ';"></div><span class="legend-text">Vacation</span></div>';
+    html += '<div class="legend-item"><div class="legend-swatch" style="background:linear-gradient(135deg, #4B4F5A 50%, ' + OPENING_COLOR + ' 50%);"></div><span class="legend-text">Opening</span></div>';
     html += '<div class="legend-item"><div class="legend-swatch" style="background:#15171D;border:1.5px solid #F5F3ED;"></div><span class="legend-text">Has note</span></div>';
     html += '<div class="legend-item"><div class="legend-swatch" style="background:' + SHIFT_META.midnight.color + ';"></div><span class="legend-text">Picked up shift</span></div>';
     html += '</div>';
@@ -1114,7 +1364,6 @@
     var currentPeriod = periodContaining(state.selected);
     var periodResult = computePayPeriodHours(currentPeriod.start);
     var periodPayday = new Date(currentPeriod.end); periodPayday.setDate(periodPayday.getDate() + 5);
-    var fmtShort = function (d) { return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); };
     var fmtMoney = function (n) { return '$' + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
 
     // Selected pay period hours
@@ -1128,6 +1377,9 @@
       { label: 'Overtime (1.5x)', val: periodResult.totals.overtime, color: DANGER_COLOR },
       { label: 'Double time (2x)', val: periodResult.totals.doubleTime, color: HOLIDAY_COLOR },
     ];
+    if (periodResult.totals.vacationHours > 0) {
+      hourBlocks.push({ label: 'Vacation', val: periodResult.totals.vacationHours, color: SHIFT_META.vacation.color });
+    }
     hourBlocks.forEach(function (b) {
       html += '<div style="flex:1;background:#101116;border:1px solid #1E2027;border-radius:10px;padding:10px 8px;text-align:center;">';
       html += '<div style="font-size:20px;font-weight:800;color:' + (b.val > 0 ? b.color : '#4A4D56') + ';">' + b.val + '</div>';
@@ -1135,14 +1387,14 @@
       html += '</div>';
     });
     html += '</div>';
-    var periodTotalHrs = periodResult.totals.regular + periodResult.totals.overtime + periodResult.totals.doubleTime;
+    var periodTotalHrs = periodResult.totals.regular + periodResult.totals.overtime + periodResult.totals.doubleTime + periodResult.totals.vacationHours;
     html += '<div style="font-size:11.5px;color:#565A64;margin-top:10px;">' + periodTotalHrs + ' total hours this period' +
       (periodResult.totals.overtime === 0 && periodResult.totals.doubleTime === 0 ? ' \u2014 no OT/DT triggered' : '') + '</div>';
     html += '</div>';
 
     // Year-to-date hours
     var ytd = computeYTDHours(state.selected);
-    var ytdTotalHrs = ytd.totals.regular + ytd.totals.overtime + ytd.totals.doubleTime;
+    var ytdTotalHrs = ytd.totals.regular + ytd.totals.overtime + ytd.totals.doubleTime + ytd.totals.vacationHours;
     html += '<div class="crew-card">';
     html += '<div class="crew-title">' + cardIcon('trendUp') + state.selected.getFullYear() + ' year-to-date hours <span style="color:#565A64;text-transform:none;letter-spacing:0;">(through ' + fmtShort(ytd.through) + ')</span></div>';
     html += '<div style="display:flex;gap:10px;margin-top:6px;">';
@@ -1151,6 +1403,9 @@
       { label: 'Overtime', val: ytd.totals.overtime, color: DANGER_COLOR },
       { label: 'Double time', val: ytd.totals.doubleTime, color: HOLIDAY_COLOR },
     ];
+    if (ytd.totals.vacationHours > 0) {
+      ytdBlocks.push({ label: 'Vacation', val: ytd.totals.vacationHours, color: SHIFT_META.vacation.color });
+    }
     ytdBlocks.forEach(function (b) {
       html += '<div style="flex:1;background:#101116;border:1px solid #1E2027;border-radius:10px;padding:10px 8px;text-align:center;">';
       html += '<div style="font-size:18px;font-weight:800;color:' + (b.val > 0 ? b.color : '#4A4D56') + ';">' + b.val + '</div>';
@@ -1171,6 +1426,7 @@
       ['Regular (' + periodResult.totals.regular + ' hrs \u00d7 $' + gross.baseRate.toFixed(2) + ')', gross.regularPay],
       ['Overtime (' + periodResult.totals.overtime + ' hrs \u00d7 $' + gross.otRate.toFixed(3) + ')', gross.otPay],
       ['Double time (' + periodResult.totals.doubleTime + ' hrs \u00d7 $' + gross.dtRate.toFixed(2) + ')', gross.dtPay],
+      ['Vacation (' + (periodResult.totals.vacationHours || 0) + ' hrs \u00d7 $' + gross.baseRate.toFixed(2) + ')', gross.vacationPay],
       ['Sunday premium (' + periodResult.totals.sundayHours + ' hrs \u00d7 $' + SUNDAY_PREMIUM_RATE.toFixed(2) + ')', gross.sundayPay],
     ];
     payRows.forEach(function (row) {
@@ -1189,19 +1445,27 @@
     html += '<div class="crew-title">' + cardIcon('dollar') + 'Estimated take-home pay & 401k</div>';
 
     html += '<div style="font-size:11px;color:#7D818C;font-weight:700;margin:4px 0 6px;">401K CONTRIBUTIONS</div>';
-    html += '<div style="display:flex;gap:10px;margin-bottom:10px;">';
-    html += '<div style="flex:1;background:#101116;border:1px solid #1E2027;border-radius:10px;padding:10px 8px;text-align:center;">' +
-      '<div style="font-size:17px;font-weight:800;color:#F5F3ED;">' + fmtMoney(take.k401Employee) + '</div>' +
-      '<div style="font-size:10px;color:#7D818C;margin-top:2px;">You contribute</div></div>';
-    html += '<div style="flex:1;background:#101116;border:1px solid #1E2027;border-radius:10px;padding:10px 8px;text-align:center;">' +
-      '<div style="font-size:17px;font-weight:800;color:' + PAYDAY_COLOR + ';">' + fmtMoney(take.k401Employer) + '</div>' +
-      '<div style="font-size:10px;color:#7D818C;margin-top:2px;">Employer match</div></div>';
+    html += '<div style="display:flex;gap:8px;margin-bottom:10px;">';
+    html += '<div style="flex:1;background:#101116;border:1px solid #1E2027;border-radius:10px;padding:10px 6px;text-align:center;">' +
+      '<div style="font-size:16px;font-weight:800;color:#F5F3ED;">' + fmtMoney(take.k401Traditional) + '</div>' +
+      '<div style="font-size:9.5px;color:#7D818C;margin-top:2px;">Traditional</div></div>';
+    html += '<div style="flex:1;background:#101116;border:1px solid #1E2027;border-radius:10px;padding:10px 6px;text-align:center;">' +
+      '<div style="font-size:16px;font-weight:800;color:' + SHIFT_META.midnight.color + ';">' + fmtMoney(take.k401Roth) + '</div>' +
+      '<div style="font-size:9.5px;color:#7D818C;margin-top:2px;">Roth</div></div>';
+    html += '<div style="flex:1;background:#101116;border:1px solid #1E2027;border-radius:10px;padding:10px 6px;text-align:center;">' +
+      '<div style="font-size:16px;font-weight:800;color:' + PAYDAY_COLOR + ';">' + fmtMoney(take.k401Employer) + '</div>' +
+      '<div style="font-size:9.5px;color:#7D818C;margin-top:2px;">Employer match</div></div>';
     html += '</div>';
+    if (take.k401Roth > 0) {
+      html += '<div style="font-size:10.5px;color:#565A64;margin-bottom:10px;">Total employee deferral (Traditional + Roth): ' +
+        fmtMoney(take.k401Traditional + take.k401Roth) + '/period \u2014 counts toward the same $24,500 (2026) limit.</div>';
+    }
 
     html += '<div style="font-size:11px;color:#7D818C;font-weight:700;margin:10px 0 6px;">DEDUCTIONS</div>';
     html += '<div style="display:flex;flex-direction:column;gap:5px;font-size:12.5px;">';
     var dedRows = [
-      ['401k (you)', take.k401Employee],
+      ['401k \u2014 Traditional', take.k401Traditional],
+      ['401k \u2014 Roth', take.k401Roth],
       ['Dental + Medical + HSA', take.flatPreTax],
       ['OASDI (6.2%)', take.oasdi],
       ['Medicare (1.45%)', take.medicare],
@@ -1210,13 +1474,51 @@
       ['Union dues', take.flatPostTax],
     ];
     dedRows.forEach(function (row) {
+      if (row[1] === 0) return;
       html += '<div style="display:flex;justify-content:space-between;color:#9A9EA8;"><span>' + row[0] + '</span><span>-' + fmtMoney(row[1]) + '</span></div>';
     });
     html += '</div>';
 
     html += '<div style="display:flex;justify-content:space-between;margin-top:10px;padding-top:10px;border-top:1px solid #1E2027;font-weight:800;font-size:19px;color:' + PAYDAY_COLOR + ';">';
     html += '<span>Estimated take-home</span><span>' + fmtMoney(take.net) + '</span></div>';
-    html += '<div style="font-size:10.5px;color:#565A64;margin-top:8px;">Calibrated from 6 of your actual pay stubs across a wide range of gross pay. OASDI/Medicare are exact; federal/state withholding use a fitted model (not real IRS tables) so they\u2019ll still drift a bit, especially on unusually light or heavy OT periods. Union dues average ~$30/period since it doesn\u2019t charge every check.</div>';
+    html += '<div style="font-size:10.5px;color:#565A64;margin-top:8px;">Calibrated from 7 of your actual pay stubs across a wide range of gross pay. OASDI/Medicare are exact; federal/state withholding use a fitted model (not real IRS tables) so they\u2019ll still drift a bit, especially on unusually light or heavy OT periods. Union dues average ~$30/period since it doesn\u2019t charge every check.</div>';
+    html += '</div>';
+
+    // Pay deduction settings (editable)
+    var ps = state.paySettings;
+    html += '<div class="crew-card">';
+    html += '<div class="crew-title" style="display:flex;align-items:center;justify-content:space-between;"><span>' + cardIcon('tag') + 'Pay deduction settings</span><button class="switch-link" id="pay-settings-btn">' + (state.paySettingsPanelOpen ? 'Close' : 'Edit') + '</button></div>';
+    html += '<div style="display:flex;flex-direction:column;gap:5px;">';
+    var settingsRows = [
+      ['401k \u2014 Traditional', (ps.k401EmployeeRate * 100).toFixed(2) + '%'],
+      ['401k \u2014 Roth', ((ps.rothK401Rate || 0) * 100).toFixed(2) + '%'],
+      ['HSA (per period)', '$' + ps.hsa.toFixed(2)],
+      ['Dental (per period)', '$' + ps.dental.toFixed(2)],
+      ['Medical (per period)', '$' + ps.medical.toFixed(2)],
+      ['Union dues (avg/period)', '$' + ps.unionAvg.toFixed(2)],
+    ];
+    settingsRows.forEach(function (row) {
+      html += '<div class="crew-row"><span class="crew-name">' + row[0] + '</span><span class="crew-name you">' + row[1] + '</span></div>';
+    });
+    html += '</div>';
+    if (state.paySettingsPanelOpen) {
+      html += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid #1E2027;display:flex;flex-direction:column;gap:8px;">';
+      var fieldRow = function (label, id, value, step) {
+        return '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">' +
+          '<span style="font-size:12.5px;color:#9A9EA8;">' + label + '</span>' +
+          '<input type="number" step="' + step + '" id="' + id + '" value="' + value + '" style="width:100px;background:#0D0E12;border:1px solid #272A33;border-radius:8px;color:#F5F3ED;padding:7px 8px;font-size:13px;text-align:right;">' +
+          '</div>';
+      };
+      html += fieldRow('401k Traditional %', 'ps-k401', (ps.k401EmployeeRate * 100).toFixed(2), '0.01');
+      html += fieldRow('401k Roth %', 'ps-k401-roth', ((ps.rothK401Rate || 0) * 100).toFixed(2), '0.01');
+      html += '<div style="font-size:10.5px;color:#565A64;">Traditional + Roth combined count toward the same $24,500 (2026) IRS employee limit.</div>';
+      html += fieldRow('HSA $/period', 'ps-hsa', ps.hsa.toFixed(2), '0.01');
+      html += fieldRow('Dental $/period', 'ps-dental', ps.dental.toFixed(2), '0.01');
+      html += fieldRow('Medical $/period', 'ps-medical', ps.medical.toFixed(2), '0.01');
+      html += fieldRow('Union avg $/period', 'ps-union', ps.unionAvg.toFixed(2), '0.01');
+      html += '<button class="quick-btn" id="pay-settings-save-btn" style="width:100%;font-weight:700;margin-top:4px;">Save</button>';
+      html += '</div>';
+    }
     html += '</div>';
 
     // Pay rate history
@@ -1270,13 +1572,37 @@
     var t = e.target;
     var el;
 
-    if ((el = t.closest('#copy-link-btn'))) {
+    if ((el = t.closest('#export-data-btn'))) {
       try {
-        navigator.clipboard.writeText(window.location.href);
-        el.textContent = 'Copied!';
-        setTimeout(function () { render(); }, 1200);
-      } catch (e) {}
+        var blob = new Blob([JSON.stringify(allAppData(), null, 2)], { type: 'application/json' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = 'shift-calendar-backup-' + dateKey(today).replace(/,/g, '-') + '.json';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+      } catch (err) {}
       return;
+    }
+    if ((el = t.closest('#import-data-btn'))) {
+      var fileInput = document.getElementById('import-file-input');
+      if (fileInput) fileInput.click();
+      return;
+    }
+    if ((el = t.closest('#pay-settings-btn'))) {
+      state.paySettingsPanelOpen = !state.paySettingsPanelOpen;
+      render(); return;
+    }
+    if ((el = t.closest('#pay-settings-save-btn'))) {
+      var g = function (id) { var e = document.getElementById(id); return e ? e.value : ''; };
+      updatePaySettings({
+        k401: g('ps-k401'), k401Roth: g('ps-k401-roth'), hsa: g('ps-hsa'), dental: g('ps-dental'),
+        medical: g('ps-medical'), union: g('ps-union'),
+      });
+      state.paySettingsPanelOpen = false;
+      render(); return;
     }
     if ((el = t.closest('#rates-btn'))) {
       state.ratePanelOpen = !state.ratePanelOpen;
@@ -1329,8 +1655,8 @@
       if (v) {
         state._vacEditingId = editId;
         state._vacPersonDraft = v.personId;
-        state._vacStartDraft = new Date(v.start).toISOString().slice(0, 10);
-        state._vacEndDraft = new Date(v.end).toISOString().slice(0, 10);
+        state._vacStartDraft = toInputDateStr(new Date(v.start));
+        state._vacEndDraft = toInputDateStr(new Date(v.end));
         render();
       }
       return;
@@ -1344,6 +1670,35 @@
     }
     if ((el = t.closest('[data-toggle-pickup]'))) {
       togglePickup(state.selected, el.getAttribute('data-toggle-pickup'));
+      render(); return;
+    }
+    if ((el = t.closest('#toggle-vac-past-btn'))) {
+      state.vacationShowPast = !state.vacationShowPast;
+      render(); return;
+    }
+    if ((el = t.closest('#toggle-trade-past-btn'))) {
+      state.tradeShowPast = !state.tradeShowPast;
+      render(); return;
+    }
+    if ((el = t.closest('#trades-btn'))) {
+      state.tradePanelOpen = !state.tradePanelOpen;
+      render(); return;
+    }
+    if ((el = t.closest('[data-trade-shift]'))) {
+      state._tradeShiftDraft = el.getAttribute('data-trade-shift');
+      render(); return;
+    }
+    if ((el = t.closest('#trade-save-btn'))) {
+      var nameEl = document.getElementById('trade-name');
+      var giveEl = document.getElementById('trade-give-date');
+      var pickupEl = document.getElementById('trade-pickup-date');
+      var shiftType = state._tradeShiftDraft || PICKUP_TYPES[0];
+      var tradeOk = addTrade(nameEl ? nameEl.value : '', giveEl ? giveEl.value : '', pickupEl ? pickupEl.value : '', shiftType);
+      if (tradeOk) { state.tradePanelOpen = false; state._tradeShiftDraft = null; render(); }
+      return;
+    }
+    if ((el = t.closest('[data-remove-trade]'))) {
+      removeTrade(el.getAttribute('data-remove-trade'));
       render(); return;
     }
     if ((el = t.closest('#note-save-btn'))) {
@@ -1423,6 +1778,20 @@
   document.getElementById('root').addEventListener('change', function (e) {
     if (e.target && e.target.id === 'vac-start') state._vacStartDraft = e.target.value;
     if (e.target && e.target.id === 'vac-end') state._vacEndDraft = e.target.value;
+    if (e.target && e.target.id === 'import-file-input' && e.target.files && e.target.files[0]) {
+      var reader = new FileReader();
+      reader.onload = function () {
+        try {
+          var data = JSON.parse(reader.result);
+          if (importAppData(data)) render();
+          else alert('That file doesn\u2019t look like a valid backup.');
+        } catch (err) {
+          alert('Couldn\u2019t read that file \u2014 make sure it\u2019s a backup exported from this calendar.');
+        }
+      };
+      reader.readAsText(e.target.files[0]);
+      e.target.value = '';
+    }
   });
 
   // Commit year input on blur (unless blurring to a stepper/quick button, handled by their own click already firing first)
@@ -1450,13 +1819,6 @@
   });
 
   render();
-
-  // Sync with cloud after first paint: pull latest if we have a blob, otherwise create one
-  if (syncBlobId) {
-    loadFromCloud(function () { render(); });
-  } else {
-    createCloudBlob();
-  }
 })();
 </script>
 </body>
